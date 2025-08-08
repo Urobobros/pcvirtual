@@ -28,6 +28,8 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
+    memset(core->memory, 0, core->memory_size);
+
     size_t read = fread(core->memory + 0xF0000, 1, 0x10000, bios);
     fclose(bios);
     if (read == 0) {
@@ -51,6 +53,12 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
+    hr = WHvSetupPartition(core->partition);
+    if (FAILED(hr)) {
+        fprintf(stderr, "WHvSetupPartition failed: 0x%lx\n", hr);
+        return -1;
+    }
+
     hr = WHvMapGpaRange(core->partition, core->memory, 0, core->memory_size,
                         WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hr)) {
@@ -58,9 +66,11 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
-    hr = WHvSetupPartition(core->partition);
+    /* Mirror the first MB to addresses 0x100000-0x1FFFFF so real-mode wrap-around works. */
+    hr = WHvMapGpaRange(core->partition, core->memory, core->memory_size, core->memory_size,
+                        WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hr)) {
-        fprintf(stderr, "WHvSetupPartition failed: 0x%lx\n", hr);
+        fprintf(stderr, "WHvMapGpaRange mirror failed: 0x%lx\n", hr);
         return -1;
     }
 
