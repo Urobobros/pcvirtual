@@ -1,5 +1,6 @@
 #include "codex_pit.h"
 #include "codex_core.h"
+#include "codex_pic.h"
 
 #include <string.h>
 
@@ -59,12 +60,7 @@ void codex_pit_update(CodexPit* pit, struct CodexCore* core) {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     if (now.QuadPart >= pit->next_fire.QuadPart) {
-        WHV_INTERRUPT_CONTROL ctrl;
-        memset(&ctrl, 0, sizeof(ctrl));
-        ctrl.Type = WHvX64InterruptTypeFixed;
-        ctrl.Vector = 0x08; /* IRQ0 -> INT 08h */
-        ctrl.TargetVtl = 0;
-        WHvRequestInterrupt(core->partition, &ctrl, sizeof(ctrl));
+        codex_pic_raise_irq(&core->pic, core, 0);
         pit->next_fire.QuadPart += pit->period_ticks;
     }
 #else
