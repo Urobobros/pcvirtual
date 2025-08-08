@@ -40,6 +40,16 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
             pit->expect_msb = 0;
         }
         break;
+    case 0x41: /* channel 1 data */
+        /* Dummy handler – just store reload so reads have something */
+        if (!pit->expect_msb) {
+            pit->latch_lsb = value;
+            pit->expect_msb = 1;
+        } else {
+            pit->ch1_dummy = (uint16_t)(pit->latch_lsb | (value << 8));
+            pit->expect_msb = 0;
+        }
+        break;
     case 0x43: /* control word */
         pit->expect_msb = 0; /* reset flipflop */
         break;
@@ -49,9 +59,22 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
 }
 
 uint8_t codex_pit_io_read(CodexPit* pit, uint16_t port) {
-    (void)port;
     if (!pit) return 0;
-    return 0; /* minimal implementation */
+    switch (port) {
+    case 0x41: { /* channel 1 - return changing value */
+#ifdef _WIN32
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        pit->ch1_dummy = (uint16_t)now.QuadPart;
+#endif
+        uint8_t ret = pit->ch1_flip ? (uint8_t)(pit->ch1_dummy >> 8) : (uint8_t)(pit->ch1_dummy & 0xFF);
+        pit->ch1_flip ^= 1;
+        return ret;
+    }
+    default:
+        break;
+    }
+    return 0;
 }
 
 void codex_pit_update(CodexPit* pit, struct CodexCore* core) {
