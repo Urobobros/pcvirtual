@@ -134,6 +134,12 @@ void codex_core_destroy(CodexCore* core) {
 
 int codex_core_run(CodexCore* core) {
     if (!core) return -1;
+
+    /* Track repeated accesses to unknown ports to avoid infinite loops when
+       the BIOS polls an unimplemented device. */
+    uint16_t last_unknown = 0xffff;
+    unsigned unknown_count = 0;
+
     while (1) {
         WHV_RUN_VP_EXIT_CONTEXT exit_ctx;
         HRESULT hr = WHvRunVirtualProcessor(core->partition, 0, &exit_ctx, sizeof(exit_ctx));
@@ -152,11 +158,25 @@ int codex_core_run(CodexCore* core) {
                 } else {
                     io->Rax = codex_pit_io_read(&core->pit, port);
                 }
+                last_unknown = 0xffff;
+                unknown_count = 0;
             } else if (io->AccessInfo.IsWrite) {
-                printf("OUT %u, size=%u, data=0x%x\n", port, io->AccessInfo.AccessSize, value);
+                printf("OUT 0x%X, size=%u, data=0x%X\n", port, io->AccessInfo.AccessSize, value);
+                if (port == last_unknown) {
+                    if (++unknown_count >= 16) return -1;
+                } else {
+                    last_unknown = port;
+                    unknown_count = 1;
+                }
             } else {
-                printf("IN %u, size=%u\n", port, io->AccessInfo.AccessSize);
+                printf("IN 0x%X, size=%u\n", port, io->AccessInfo.AccessSize);
                 io->Rax = 0; /* return zero */
+                if (port == last_unknown) {
+                    if (++unknown_count >= 16) return -1;
+                } else {
+                    last_unknown = port;
+                    unknown_count = 1;
+                }
             }
             break;
         }
