@@ -14,7 +14,9 @@ static uint16_t pit_get_ch1(CodexPit* pit) {
     QueryPerformanceCounter(&now);
     uint64_t ticks = (uint64_t)(now.QuadPart - pit->ch1_start.QuadPart);
     uint64_t pit_ticks = (uint64_t)((double)ticks * 1193182.0 / pit->perf_freq.QuadPart);
-    return (uint16_t)(0x10000 - (pit_ticks & 0xFFFF));
+    uint16_t reload = pit->ch1_reload ? pit->ch1_reload : 0x10000;
+    uint16_t down = (uint16_t)(reload - (pit_ticks % reload));
+    return down ? down : reload;
 #else
     (void)pit; return 0;
 #endif
@@ -26,10 +28,11 @@ void codex_pit_init(CodexPit* pit) {
     QueryPerformanceFrequency(&pit->perf_freq);
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    pit->reload = 0x10000; /* default 65536 */
+    pit->reload = 0x10000; /* channel 0 default */
     pit->period_ticks = (uint64_t)((double)pit->perf_freq.QuadPart * pit->reload / 1193182.0);
     pit->next_fire.QuadPart = now.QuadPart + pit->period_ticks;
     pit->ch1_start = now;
+    pit->ch1_reload = 0;
 #endif
 }
 
@@ -53,15 +56,29 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
         }
         break;
     case 0x41: /* channel 1 data */
-        /* Channel 1 not programmed by BIOS in our use-case; ignore */
+        if (!pit->ch1_expect_msb) {
+            pit->ch1_lsb = value;
+            pit->ch1_expect_msb = 1;
+        } else {
+            pit->ch1_reload = (uint16_t)(pit->ch1_lsb | (value << 8));
+#ifdef _WIN32
+            QueryPerformanceCounter(&pit->ch1_start);
+#endif
+            pit->ch1_expect_msb = 0;
+        }
         break;
     case 0x43: /* control word */
         pit->expect_msb = 0; /* reset flipflop for channel 0 */
-        if ((value & 0xC0) == 0x40 && (value & 0x30) == 0x00) {
-            /* Latch channel 1 */
-            pit->ch1_latch = pit_get_ch1(pit);
-            pit->ch1_latched = 1;
-            pit->ch1_flip = 0;
+        if ((value & 0xC0) == 0x40) {
+            if ((value & 0x30) == 0x00) {
+                /* Latch channel 1 */
+                pit->ch1_latch = pit_get_ch1(pit);
+                pit->ch1_latched = 1;
+                pit->ch1_flip = 0;
+            } else {
+                /* Prepare for new reload value */
+                pit->ch1_expect_msb = 0;
+            }
         }
         break;
     default:

@@ -12,10 +12,15 @@ extern "C" {
 struct CodexCore; /* forward declaration */
 
 typedef struct {
+    /* Channel 0 reload/value latching */
     uint32_t reload;
     uint8_t  latch_lsb;
     int      expect_msb;
+
     /* Channel 1 state for BIOS memory refresh polling */
+    uint16_t ch1_reload;
+    uint8_t  ch1_lsb;
+    int      ch1_expect_msb;
     uint16_t ch1_latch;
     int      ch1_latched;
     int      ch1_flip;
