@@ -157,7 +157,9 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
 
     codex_pit_init(&core->pit);
     codex_pic_init(&core->pic);
-    codex_nmi_init(&core->nmi);
+    if (codex_nmi_init(&core->nmi) < 0) {
+        return -1;
+    }
 
     return 0;
 }

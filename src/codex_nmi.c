@@ -1,8 +1,9 @@
 #include "codex_nmi.h"
 
-void codex_nmi_init(CodexNmi* nmi) {
-    if (!nmi) return;
+int codex_nmi_init(CodexNmi* nmi) {
+    if (!nmi) return -1;
     nmi->mask = 0;
+    return 0;
 }
 
 void codex_nmi_io_write(CodexNmi* nmi, uint8_t value) {
