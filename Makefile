@@ -1,5 +1,9 @@
 CC ?= gcc
 CFLAGS ?= -std=c11 -Wall -Wextra
+
+# Enable verbose I/O port logging by default so hardware interactions are
+# visible without requiring extra build flags.
+CFLAGS += -DPORT_DEBUG
 SRC := $(wildcard src/*.c)
 
 LIBS :=
