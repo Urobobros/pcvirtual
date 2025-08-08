@@ -1,0 +1,173 @@
+FAR plán pro Codex (WHPX emulace starého PC)
+
+Revize: 2025‑08‑08Vlastník: Martin B.Repo / modul: codex (WHPX‑based XT/AT emulator)
+
+0) Cíl a rozsah
+
+Cíl: Zprovoznit minimalistický, ale stabilní emulátor starého PC (XT/AT třídy) nad WHPX s realistickým časováním (PIT/IRQ0), kompatibilním BIOS bootem a základní I/O, s důrazem na deterministelný log a snadné ladění.Out of scope (verze 1): Přesná cyklová emulace CPU, chráněný režim 386+, pokročilé grafické adaptéry (SVGA), plná přesnost DMA/ISA wait‑states.
+
+1) Požadavky (Product/Feature)
+
+CPU: Intel 8088 (kompatibilní, např. NEC V20)
+
+Jmenovitá frekvence: 4,77 MHz (odvozeno z 14,31818 MHz / 3)
+
+Režim: real‑mode, reset vektor CS**:IP**** = F000****:FFF0**
+
+Paměť: 640 kB konvenční RAM + ROM BIOS (min. 32–64 kB)
+
+Časování: 8253/8254 PIT, kanál 0 → IRQ0 ~18,2065 Hz (65536 / 1,193,182 Hz)
+
+Přerušení: PIC 8259 (master), doručování IRQ0 a IRQ1 (klávesnice)
+
+I/O základy: porty 0x40–0x43 (PIT), 0x60/0x64 (klávesnice), 0x20/0x21 (PIC), 0x61 (speaker latch)
+
+Boot: start AMI/Phoenix XT BIOS → POST → INT 19h → DOS (floppy/bootsector)
+
+Logování: časově značkované I/O logy, IRQ logy, změny režimů PIT
+
+Determinismus: možnost „record & replay“ I/O událostí (min. na úrovni portů)
+
+2) Architektura (Approach)
+
+2.1 CPU nad WHPX
+
+Inicializace partition, VP=1, mapování GPA 0..1MB + BIOS na 0xF0000.
+
+Nastavení registrů: RIP=0xFFF0, CS=F000, CS.base=0xF0000, RFLAGS=0x2.
+
+Hlavní smyčka: WHvRunVirtualProcessor() + obsluha IoPortAccess, Halt, InterruptWindow.
+
+2.2 Časování (PIT → IRQ0)
+
+QPC‑based rytmus: QueryPerformanceCounter() + výpočet deadlinu pro IRQ0.
+
+Perioda default: ~54,9254 ms; při změně dělitele na ch0 přepočet.
+
+WaitableTimer/Sleep(0) pro jemné „yield until deadline“; injekce INT 08h přes WHPX.
+
+2.3 I/O intercepty
+
+PIT (0x40–0x43): parser příkazů (RW mode, latch), LSB/MSB write, divider, gate.
+
+PIC (0x20/0x21): IMR, OCW1/2/3, EOI, priority; pending fronta IRQ.
+
+Klávesnice (0x60/0x64): jednoduchý ring buffer, scancode set 1, generace IRQ1.
+
+Speaker (0x61): mirror pro stav PIT ch2 + speaker enable (bez audio výstupu v MVP).
+
+2.4 BIOS, RAM, média
+
+Loader BIOS (bin), volitelně „shadow“ do RAM pro rychlé patche při ladění.
+
+Boot z image (A:) – minimálně čtení boot sektoru (INT 19h cestou BIOSu).
+
+2.5 Ladění a logování
+
+Strukturovaný log: index; t(ms); IN/OUT; port; size; val; note
+
+IRQ log: t(ms); inject IRQx; ack; EOI
+
+Volba verbosity (ENV/flag): I/O only / +IRQ / +PIT režimy / +PIC stavy
+
+3) Akční plán (Roadmap)
+
+Milestone M0 – Skeleton běh BIOSu (T+1 týden)
+
+KPI: vidím první přístupy BIOSu (I/O, HLT), žádný crash v WHvRunVirtualProcessor.
+
+Milestone M1 – PIT + přesné IRQ0 (T+2 týdny)
+
+KPI: DOS TIME/DATE se hýbou, BIOS delay (INT 15h AH=86h) má správnou délku.
+
+Milestone M2 – PIC 8259 a IRQ doručování (T+3 týdny)
+
+KPI: konzistentní pořadí a maskování IRQ0/IRQ1; žádné „ztracené“ přerušení.
+
+Milestone M3 – Klávesnice (IRQ1) (T+4 týdny)
+
+KPI: BIOS klávesy přijímá, DOS prompt reaguje, opakovací klávesa funguje.
+
+Milestone M4 – Stabilizace a logy (T+5 týdnů)
+
+
+
+(Volitelně následně: RTC/IRQ8, DMA, floppy řadič, CGA/EGA, speaker audio, HDD.)
+
+4) Akceptační kritéria (Results)
+
+AC‑1: XT BIOS projde POST, nepadá, log zobrazuje smysluplné I/O.
+
+AC‑2: Hodnoty na 0040:006C přibývají ~18,2065×/s (±0,1 % za 10 min).
+
+AC‑3: INT 15h AH=86h čeká do tolerance ±2 ms pro intervaly 10–500 ms.
+
+AC‑4: Stisk klávesy vyvolá IRQ1 → BIOS vrátí kód do bufferu; DOS přijme znak.
+
+AC‑5: Žádné „vyhladovění“ IRQ: při 100% CPU loadu hosta stále držíme tick ±0,5 %.
+
+5) Rizika a mitigace
+
+R‑1: Drift/latence QPC/WaitableTimer → pinning thread na 1 jádro, watchdog na jitter; adaptivní „catch‑up“ tick.
+
+R‑2: Ztráta přerušení při maskování → fronta pending IRQ + přesné EOI/IMR.
+
+R‑3: BIOS závislý na neimplementovaných portech → postupně stubovat (0x61, 0x3DA, apod.) a logovat přístupy.
+
+R‑4: WHPX edge‑cases (EXITy) → robustní switch; fallback log pro neznámé exity.
+
+6) Implementační detaily (Notes)
+
+PITCONST / divider: divider==0 → interpretuj jako 65536 (HW chování).
+
+INT 08h → INT 1Ch: nechte BIOS řetězit; pouze zajistit včasnou injekci IRQ0.
+
+PIC EOI: po doručení ISR (INT 08h/09h) očekávej OUT 0x20, 0x20.
+
+DMA (budoucí): u 8237 implementovat wrap (mirror) při přístupu mimo RAM (požadavek: „zrcadlení“ místo 0xFF).
+
+Determinismus: možnost přehrát log I/O pro reprodukci.
+
+7) Test plan (sanity & integration)
+
+Sanity: BIOS jump z F000:FFF0, čtení BDA, přístup na PIT porty 0x40–0x43.
+
+Timer: Sleduj 0040:006C 60 s → očekávej 18,2065 * 60 ≈ 1092–1095 ticků.
+
+Delay: INT 15h AH=86h s 100 ms → měř host QPC (±2 ms).
+
+Keyboard: Stisk „A“ → scancode 0x1E → DOS vypíše „a/A“.
+
+IRQ robustnost: Zátěž host CPU (stress) → drift < 0,5 % / 10 min.
+
+8) Dodávky (Deliverables)
+
+codex-core: WHPX init, run‑loop, GPA map
+
+codex-io: I/O intercepty + log framework
+
+codex-pit: PIT state machine + IRQ0 timing
+
+codex-pic: PIC 8259 (IMR/EOI/priority)
+
+codex-kbd: basic 8042/keyboard
+
+Dokumentace: README + I/O map + known‑issues + test‑howto
+
+9) Odhad a kapacity
+
+M0–M4: ~4–5 týdnů čistého času pro 1 vývojáře (bez grafiky/disku)
+
+Testování: 1 den/milestone (manuální + skript měření ticku)
+
+10) Otevřené otázky
+
+Vyžadujeme už v M1 dynamické přepočty periody podle skutečných OUT na 0x40/0x43?
+
+Minimální sada portů mimo PIT/PIC/KBD (např. 0x3DA VGA status) pro kompatibilitu POST?
+
+11) Přílohy
+
+Mapování BDA (segment 0x40) – klíčové offsety: 0x006C (tick count), 0x0017 (klávesy)
+
+Reset vektor a pořadí volání BIOS rutin (POST → 
