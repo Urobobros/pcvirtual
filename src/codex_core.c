@@ -1,5 +1,6 @@
 #include "codex_core.h"
 #include "codex_pit.h"
+#include "port_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,10 +159,11 @@ int codex_core_run(CodexCore* core) {
                 } else {
                     io->Rax = codex_pit_io_read(&core->pit, port);
                 }
+                port_log_io(io, "pit");
                 last_unknown = 0xffff;
                 unknown_count = 0;
             } else if (io->AccessInfo.IsWrite) {
-                printf("OUT 0x%X, size=%u, data=0x%X\n", port, io->AccessInfo.AccessSize, value);
+                port_log_io(io, "unhandled");
                 if (port == last_unknown) {
                     if (++unknown_count >= 16) return -1;
                 } else {
@@ -169,8 +171,8 @@ int codex_core_run(CodexCore* core) {
                     unknown_count = 1;
                 }
             } else {
-                printf("IN 0x%X, size=%u\n", port, io->AccessInfo.AccessSize);
                 io->Rax = 0; /* return zero */
+                port_log_io(io, "unhandled");
                 if (port == last_unknown) {
                     if (++unknown_count >= 16) return -1;
                 } else {
