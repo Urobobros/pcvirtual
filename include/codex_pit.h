@@ -15,9 +15,13 @@ typedef struct {
     uint32_t reload;
     uint8_t  latch_lsb;
     int      expect_msb;
-    /* Dummy counter for channel 1 so BIOS polling sees changing values */
-    uint16_t ch1_dummy;
+    /* Channel 1 state for BIOS memory refresh polling */
+    uint16_t ch1_latch;
+    int      ch1_latched;
     int      ch1_flip;
+#ifdef _WIN32
+    LARGE_INTEGER ch1_start;
+#endif
 #ifdef _WIN32
     LARGE_INTEGER perf_freq;
     LARGE_INTEGER next_fire;

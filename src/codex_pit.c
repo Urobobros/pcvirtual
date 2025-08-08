@@ -8,6 +8,17 @@
 #include <winhvplatform.h>
 #endif
 
+static uint16_t pit_get_ch1(CodexPit* pit) {
+#ifdef _WIN32
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t ticks = (uint64_t)(now.QuadPart - pit->ch1_start.QuadPart);
+    uint64_t pit_ticks = (uint64_t)((double)ticks * 1193182.0 / pit->perf_freq.QuadPart);
+    return (uint16_t)(0x10000 - (pit_ticks & 0xFFFF));
+#else
+    (void)pit; return 0;
+#endif
+}
 void codex_pit_init(CodexPit* pit) {
     if (!pit) return;
     memset(pit, 0, sizeof(*pit));
@@ -18,6 +29,7 @@ void codex_pit_init(CodexPit* pit) {
     pit->reload = 0x10000; /* default 65536 */
     pit->period_ticks = (uint64_t)((double)pit->perf_freq.QuadPart * pit->reload / 1193182.0);
     pit->next_fire.QuadPart = now.QuadPart + pit->period_ticks;
+    pit->ch1_start = now;
 #endif
 }
 
@@ -41,17 +53,16 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
         }
         break;
     case 0x41: /* channel 1 data */
-        /* Dummy handler – just store reload so reads have something */
-        if (!pit->expect_msb) {
-            pit->latch_lsb = value;
-            pit->expect_msb = 1;
-        } else {
-            pit->ch1_dummy = (uint16_t)(pit->latch_lsb | (value << 8));
-            pit->expect_msb = 0;
-        }
+        /* Channel 1 not programmed by BIOS in our use-case; ignore */
         break;
     case 0x43: /* control word */
-        pit->expect_msb = 0; /* reset flipflop */
+        pit->expect_msb = 0; /* reset flipflop for channel 0 */
+        if ((value & 0xC0) == 0x40 && (value & 0x30) == 0x00) {
+            /* Latch channel 1 */
+            pit->ch1_latch = pit_get_ch1(pit);
+            pit->ch1_latched = 1;
+            pit->ch1_flip = 0;
+        }
         break;
     default:
         break;
@@ -61,14 +72,12 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
 uint8_t codex_pit_io_read(CodexPit* pit, uint16_t port) {
     if (!pit) return 0;
     switch (port) {
-    case 0x41: { /* channel 1 - return changing value */
-#ifdef _WIN32
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        pit->ch1_dummy = (uint16_t)now.QuadPart;
-#endif
-        uint8_t ret = pit->ch1_flip ? (uint8_t)(pit->ch1_dummy >> 8) : (uint8_t)(pit->ch1_dummy & 0xFF);
+    case 0x41: {
+        uint16_t val = pit->ch1_latched ? pit->ch1_latch : pit_get_ch1(pit);
+        uint8_t ret = pit->ch1_flip ? (uint8_t)(val >> 8) : (uint8_t)(val & 0xFF);
         pit->ch1_flip ^= 1;
+        if (!pit->ch1_flip && pit->ch1_latched)
+            pit->ch1_latched = 0;
         return ret;
     }
     default:
