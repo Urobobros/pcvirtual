@@ -1,6 +1,7 @@
 #include "codex_core.h"
 #include "codex_pit.h"
 #include "codex_pic.h"
+#include "codex_nmi.h"
 #include "port_log.h"
 
 #include <stdio.h>
@@ -156,6 +157,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
 
     codex_pit_init(&core->pit);
     codex_pic_init(&core->pic);
+    codex_nmi_init(&core->nmi);
 
     return 0;
 }
@@ -209,13 +211,22 @@ int codex_core_run(CodexCore* core) {
                 port_log_io(io, "pit");
                 last_unknown = 0xffff;
                 unknown_count = 0;
-            } else if (port == 0x20 || port == 0x21 || port == 0xA0 || port == 0xA1) {
+            } else if (port == 0x20 || port == 0x21 || port == 0xA1) {
                 if (io->AccessInfo.IsWrite) {
                     codex_pic_io_write(&core->pic, port, (uint8_t)value);
                 } else {
                     io->Rax = codex_pic_io_read(&core->pic, port);
                 }
                 port_log_io(io, "pic");
+                last_unknown = 0xffff;
+                unknown_count = 0;
+            } else if (port == CODEX_NMI_PORT) {
+                if (io->AccessInfo.IsWrite) {
+                    codex_nmi_io_write(&core->nmi, (uint8_t)value);
+                } else {
+                    io->Rax = codex_nmi_io_read(&core->nmi);
+                }
+                port_log_io(io, "nmi");
                 last_unknown = 0xffff;
                 unknown_count = 0;
             } else if (io->AccessInfo.IsWrite) {

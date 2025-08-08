@@ -5,6 +5,7 @@
 
 #include "codex_pit.h"
 #include "codex_pic.h"
+#include "codex_nmi.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -27,6 +28,7 @@ typedef struct CodexCore {
     size_t memory_size;
     CodexPit pit;
     CodexPic pic;
+    CodexNmi nmi;
 } CodexCore;
 
 int codex_core_init(CodexCore* core, const char* bios_path);
