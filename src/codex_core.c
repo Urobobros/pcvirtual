@@ -225,10 +225,11 @@ int codex_core_run(CodexCore* core) {
             } else if (port == CODEX_NMI_PORT) {
                 if (io->AccessInfo.IsWrite) {
                     codex_nmi_io_write(&core->nmi, (uint8_t)value);
+                    port_log_io(io, "nmi_write");
                 } else {
                     io->Rax = codex_nmi_io_read(&core->nmi);
+                    port_log_io(io, "nmi");
                 }
-                port_log_io(io, "nmi");
                 last_unknown = 0xffff;
                 unknown_count = 0;
             } else if (io->AccessInfo.IsWrite) {
@@ -248,6 +249,22 @@ int codex_core_run(CodexCore* core) {
                     last_unknown = port;
                     unknown_count = 1;
                 }
+            }
+
+            WHV_REGISTER_NAME reg_names[2];
+            WHV_REGISTER_VALUE reg_vals[2];
+            reg_names[0] = WHvX64RegisterRip;
+            reg_vals[0].Reg64 = exit_ctx.VpContext.Rip + exit_ctx.VpContext.InstructionLength;
+            UINT32 reg_count = 1;
+            if (!io->AccessInfo.IsWrite) {
+                reg_names[1] = WHvX64RegisterRax;
+                reg_vals[1].Reg64 = io->Rax;
+                reg_count = 2;
+            }
+            HRESULT set_hr = WHvSetVirtualProcessorRegisters(core->partition, 0, reg_names, reg_count, reg_vals);
+            if (FAILED(set_hr)) {
+                fprintf(stderr, "WHvSetVirtualProcessorRegisters failed: 0x%lx\n", set_hr);
+                return -1;
             }
             break;
         }
