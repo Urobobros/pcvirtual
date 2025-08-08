@@ -20,7 +20,7 @@ typedef WHV_PARTITION_HANDLE CodexPartitionHandle;
 typedef void* CodexPartitionHandle;
 #endif
 
-typedef struct {
+typedef struct CodexCore {
     CodexPartitionHandle partition;
     uint8_t* memory;
     size_t memory_size;

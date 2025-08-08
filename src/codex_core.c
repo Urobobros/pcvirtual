@@ -135,18 +135,18 @@ int codex_core_run(CodexCore* core) {
         case WHvRunVpExitReasonX64IoPortAccess: {
             WHV_X64_IO_PORT_ACCESS_CONTEXT* io = &exit_ctx.IoPortAccess;
             uint16_t port = io->PortNumber;
-            uint32_t value = io->Data;
+            uint32_t value = (uint32_t)io->Rax;
             if (port >= 0x40 && port <= 0x43) {
                 if (io->AccessInfo.IsWrite) {
                     codex_pit_io_write(&core->pit, port, (uint8_t)value);
                 } else {
-                    io->Data = codex_pit_io_read(&core->pit, port);
+                    io->Rax = codex_pit_io_read(&core->pit, port);
                 }
             } else if (io->AccessInfo.IsWrite) {
                 printf("OUT %u, size=%u, data=0x%x\n", port, io->AccessInfo.AccessSize, value);
             } else {
                 printf("IN %u, size=%u\n", port, io->AccessInfo.AccessSize);
-                io->Data = 0; /* return zero */
+                io->Rax = 0; /* return zero */
             }
             break;
         }
