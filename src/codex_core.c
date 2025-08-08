@@ -11,11 +11,29 @@
 
 static const uint64_t GPA_LIMIT = 0x00100000; /* 1 MB */
 
+static void mirror_bios_region(uint8_t* base, size_t size) {
+    if (size == 0) return;
+    for (size_t pos = size; pos < 0x10000; pos += size)
+        memcpy(base + pos, base, size);
+}
+
+int codex_core_hypervisor_present(void) {
+    BOOL present = FALSE;
+    UINT32 len = 0;
+    HRESULT hr = WHvGetCapability(WHvCapabilityCodeHypervisorPresent, &present, sizeof(present), &len);
+    return (hr == S_OK && present) ? 1 : 0;
+}
+
 int codex_core_init(CodexCore* core, const char* bios_path) {
     if (!core) return -1;
     memset(core, 0, sizeof(*core));
 
-    FILE* bios = fopen(bios_path, "rb");
+    const char* path = bios_path;
+    FILE* bios = fopen(path, "rb");
+    if (!bios && strcmp(path, "ami_8088_bios_31jan89.bin") == 0) {
+        bios = fopen("ivt.fw", "rb");
+        if (bios) path = "ivt.fw";
+    }
     if (!bios) {
         fprintf(stderr, "Failed to open BIOS: %s\n", bios_path);
         return -1;
@@ -37,6 +55,24 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         fprintf(stderr, "Failed to read BIOS image.\n");
         return -1;
     }
+    if (read < 0x10000)
+        mirror_bios_region(core->memory + 0xF0000, read);
+
+    uint8_t* mem = core->memory;
+    if (mem[0xFFFF0] == 0xEA) {
+        printf("BIOS reset vector jumps to %02X%02X:%02X%02X\n",
+               mem[0xFFFF4], mem[0xFFFF3], mem[0xFFFF2], mem[0xFFFF1]);
+    } else {
+        puts("Warning: BIOS reset vector is unexpected; patching.");
+        mem[0xFFFF0] = 0xEA;
+        mem[0xFFFF1] = 0x00;
+        mem[0xFFFF2] = 0x00;
+        mem[0xFFFF3] = 0x00;
+        mem[0xFFFF4] = 0xF0;
+    }
+    printf("BIOS loaded from %s (%zu bytes)\n", path, read);
+    printf("Reset vector bytes: %02X %02X %02X %02X %02X\n",
+           mem[0xFFFF0], mem[0xFFFF1], mem[0xFFFF2], mem[0xFFFF3], mem[0xFFFF4]);
 
     HRESULT hr = WHvCreatePartition(&core->partition);
     if (FAILED(hr)) {
@@ -122,6 +158,15 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     return 0;
 }
 
+int codex_core_load_program(CodexCore* core, const char* path, uint32_t offset) {
+    if (!core || !core->memory || !path) return -1;
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t read = fread(core->memory + offset, 1, core->memory_size - offset, f);
+    fclose(f);
+    return (read > 0) ? 0 : -1;
+}
+
 void codex_core_destroy(CodexCore* core) {
     if (!core) return;
     if (core->partition) {
@@ -201,6 +246,14 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     (void)bios_path;
     fprintf(stderr, "codex_core_init: Windows platform required.\n");
     return -1;
+}
+
+int codex_core_load_program(CodexCore* core, const char* path, uint32_t offset) {
+    (void)core; (void)path; (void)offset; return -1;
+}
+
+int codex_core_hypervisor_present(void) {
+    return 0;
 }
 
 void codex_core_destroy(CodexCore* core) {

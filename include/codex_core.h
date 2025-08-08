@@ -28,6 +28,8 @@ typedef struct CodexCore {
 } CodexCore;
 
 int codex_core_init(CodexCore* core, const char* bios_path);
+int codex_core_load_program(CodexCore* core, const char* path, uint32_t offset);
+int codex_core_hypervisor_present(void);
 void codex_core_destroy(CodexCore* core);
 int codex_core_run(CodexCore* core);
 
