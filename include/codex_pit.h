@@ -24,6 +24,7 @@ typedef struct {
     uint16_t ch0_latch;    /* latched current count */
     int      ch0_latched;  /* 1 pokud je hodnota latched */
     int      ch0_flip;     /* 0=LSB next, 1=MSB next */
+    int      ch0_programmed; // 0 po resetu, 1 po prvním zápisu do 0x40
 #ifdef _WIN32
     LARGE_INTEGER ch0_start; /* timestamp začátku aktuální periody ch0 */
 #endif

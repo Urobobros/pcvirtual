@@ -11,14 +11,27 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <WinHvPlatform.h>
+#include <WinHvPlatformDefs.h>
 #ifdef _MSC_VER
 #pragma comment(lib, "WinHvPlatform.lib")
 #endif
 
-static uint8_t ppi_61_last = 0, port_63_last = 0, cga3d8_last = 0, cga3b8_last = 0;
+/* Jednoduché shadow registry pro pár zařízení */
+static uint8_t ppi_61_last = 0, port_63_last = 0;
+static uint8_t cga3d8_last = 0, cga3b8_last = 0;
+static uint8_t cga_status  = 0;
+
+/* DMA 8237 (minimální stub, stačí na reset/flipflop/porty) */
+static uint8_t  dma_main_cmd = 0, dma_req = 0, dma_mask = 0x0F, dma_mode = 0;
+static uint8_t  dma_temp = 0, dma_clear = 0;
+static uint8_t  dma_page[8] = {0};   /* 0x80–0x87 */
+static uint16_t dma_addr[4] = {0}, dma_count[4] = {0};
+static uint8_t  dma_flipflop = 0;    /* 0=LSB next, 1=MSB next */
 
 static const uint64_t GPA_LIMIT = 0x00100000; /* 1 MB */
 
+/* Pomocná: zrcadlení BIOSu do celé F0000-FFFFF oblasti */
 static void mirror_bios_region(uint8_t* base, size_t size) {
     if (size == 0) return;
     for (size_t pos = size; pos < 0x10000; pos += size)
@@ -36,6 +49,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     if (!core) return -1;
     memset(core, 0, sizeof(*core));
 
+    /* Načtení BIOSu */
     const char* path = bios_path;
     FILE* bios = fopen(path, "rb");
     if (!bios && strcmp(path, "ami_8088_bios_31jan89.bin") == 0) {
@@ -54,7 +68,6 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         fprintf(stderr, "Failed to allocate guest memory.\n");
         return -1;
     }
-
     memset(core->memory, 0, core->memory_size);
 
     size_t read = fread(core->memory + 0xF0000, 1, 0x10000, bios);
@@ -82,6 +95,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     printf("Reset vector bytes: %02X %02X %02X %02X %02X\n",
            mem[0xFFFF0], mem[0xFFFF1], mem[0xFFFF2], mem[0xFFFF3], mem[0xFFFF4]);
 
+    /* Vytvořit/naplnit partition */
     HRESULT hr = WHvCreatePartition(&core->partition);
     if (FAILED(hr)) {
         fprintf(stderr, "WHvCreatePartition failed: 0x%lx\n", hr);
@@ -111,7 +125,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
-    /* Mirror the first MB to addresses 0x100000-0x1FFFFF so real-mode wrap-around works. */
+    /* Mirrornout první MB na 0x100000—0x1FFFFF kvůli wrapu v reálném režimu */
     hr = WHvMapGpaRange(core->partition, core->memory, core->memory_size, core->memory_size,
                         WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hr)) {
@@ -125,35 +139,23 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
+    /* Inicializace CS:IP = F000:FFF0, FLAGS=0x2 a segmentů */
     WHV_REGISTER_NAME names[6];
     WHV_REGISTER_VALUE values[6];
     memset(values, 0, sizeof(values));
 
-    names[0] = WHvX64RegisterRip;
-    values[0].Reg64 = 0xFFF0;
+    names[0] = WHvX64RegisterRip;     values[0].Reg64 = 0xFFF0;
+    names[1] = WHvX64RegisterRflags;  values[1].Reg64 = 0x2;
 
-    names[1] = WHvX64RegisterRflags;
-    values[1].Reg64 = 0x2;
+    WHV_X64_SEGMENT_REGISTER cs = (WHV_X64_SEGMENT_REGISTER){0};
+    cs.Base = 0xF0000; cs.Limit = 0xFFFF; cs.Selector = 0xF000; cs.Attributes = 0x009B;
+    names[2] = WHvX64RegisterCs; values[2].Segment = cs;
 
-    WHV_X64_SEGMENT_REGISTER cs = {0};
-    cs.Base = 0xF0000;
-    cs.Limit = 0xFFFF;
-    cs.Selector = 0xF000;
-    cs.Attributes = 0x009B;
-    names[2] = WHvX64RegisterCs;
-    values[2].Segment = cs;
-
-    WHV_X64_SEGMENT_REGISTER ds = {0};
-    ds.Base = 0;
-    ds.Limit = 0xFFFF;
-    ds.Selector = 0;
-    ds.Attributes = 0x0093;
-    names[3] = WHvX64RegisterDs;
-    values[3].Segment = ds;
-    names[4] = WHvX64RegisterEs;
-    values[4].Segment = ds;
-    names[5] = WHvX64RegisterSs;
-    values[5].Segment = ds;
+    WHV_X64_SEGMENT_REGISTER ds = (WHV_X64_SEGMENT_REGISTER){0};
+    ds.Base = 0; ds.Limit = 0xFFFF; ds.Selector = 0; ds.Attributes = 0x0093;
+    names[3] = WHvX64RegisterDs; values[3].Segment = ds;
+    names[4] = WHvX64RegisterEs; values[4].Segment = ds;
+    names[5] = WHvX64RegisterSs; values[5].Segment = ds;
 
     hr = WHvSetVirtualProcessorRegisters(core->partition, 0, names, 6, values);
     if (FAILED(hr)) {
@@ -161,6 +163,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
+    /* Zařízení */
     codex_pit_init(&core->pit);
     codex_pic_init(&core->pic);
     if (codex_nmi_init(&core->nmi) < 0) {
@@ -174,7 +177,7 @@ int codex_core_load_program(CodexCore* core, const char* path, uint32_t offset) 
     if (!core || !core->memory || !path) return -1;
     FILE* f = fopen(path, "rb");
     if (!f) return -1;
-    size_t read = fread(core->memory + offset, 1, core->memory_size - offset, f);
+    size_t read = fread((uint8_t*)core->memory + offset, 1, core->memory_size - offset, f);
     fclose(f);
     return (read > 0) ? 0 : -1;
 }
@@ -193,18 +196,18 @@ void codex_core_destroy(CodexCore* core) {
 int codex_core_run(CodexCore* core) {
     if (!core) return -1;
 
-    /* Track repeated accesses to unknown ports to avoid infinite loops when
-       the BIOS polls an unimplemented device. */
+    /* ochrana před nekonečným pollováním neimplementovaných portů */
     uint16_t last_unknown = 0xffff;
     unsigned unknown_count = 0;
 
-    #ifdef _WIN32
-        LARGE_INTEGER _dbg_freq, _dbg_last;
-        QueryPerformanceFrequency(&_dbg_freq);
-        QueryPerformanceCounter(&_dbg_last);
-        uint32_t* bda_ticks = (uint32_t*)((uint8_t*)core->memory + 0x046C);
-        uint32_t  last_ticks = *bda_ticks;
-    #endif
+    /* malý debug BDA ticks */
+#ifdef _WIN32
+    LARGE_INTEGER _dbg_freq, _dbg_last;
+    QueryPerformanceFrequency(&_dbg_freq);
+    QueryPerformanceCounter(&_dbg_last);
+    uint32_t* bda_ticks = (uint32_t*)((uint8_t*)core->memory + 0x046C);
+    uint32_t  last_ticks = *bda_ticks;
+#endif
 
     while (1) {
         WHV_RUN_VP_EXIT_CONTEXT exit_ctx;
@@ -213,20 +216,36 @@ int codex_core_run(CodexCore* core) {
             fprintf(stderr, "WHvRunVirtualProcessor failed: 0x%lx\n", hr);
             return -1;
         }
+
         switch (exit_ctx.ExitReason) {
         case WHvRunVpExitReasonX64IoPortAccess: {
             WHV_X64_IO_PORT_ACCESS_CONTEXT* io = &exit_ctx.IoPortAccess;
             uint16_t port = io->PortNumber;
             uint32_t value = (uint32_t)io->Rax;
+
+            /* PIT 0x40–0x43 */
             if (port >= 0x40 && port <= 0x43) {
                 if (io->AccessInfo.IsWrite) {
                     codex_pit_io_write(&core->pit, port, (uint8_t)value);
                 } else {
                     io->Rax = codex_pit_io_read(&core->pit, port);
                 }
-                port_log_io(io, "pit");
-                last_unknown = 0xffff;
-                unknown_count = 0;
+                port_log_io(io, io->AccessInfo.IsWrite ? "pit_write" : "pit_read");
+                last_unknown = 0xffff; unknown_count = 0;
+            
+            /* nmi 0xA0 */
+            } else if (port == 0x0A) {          // typicky 0xA0
+                    if (io->AccessInfo.IsWrite) {
+                        codex_nmi_io_write(&core->nmi, (uint8_t)value);
+                        port_log_io(io, "nmi_write");
+                    } else {
+                        io->Rax = codex_nmi_io_read(&core->nmi);
+                        port_log_io(io, "nmi_read");
+                    }
+                    last_unknown = 0xffff; 
+                    unknown_count = 0;
+
+            /* PIC master (PC/XT má jen 0x20/0x21) */
             } else if (port == 0x20 || port == 0x21) {
                 if (io->AccessInfo.IsWrite) {
                     codex_pic_io_write(&core->pic, port, (uint8_t)value);
@@ -234,59 +253,113 @@ int codex_core_run(CodexCore* core) {
                     io->Rax = codex_pic_io_read(&core->pic, port);
                 }
                 port_log_io(io, "pic");
-                last_unknown = 0xffff;
-                unknown_count = 0;
-            } 
-            else if (port == 0x61) { /* PPI port B / speaker ctrl */
-                if (io->AccessInfo.IsWrite) 
-                    ppi_61_last = (uint8_t)value;
-                else 
-                    io->Rax = ppi_61_last;
+                last_unknown = 0xffff; unknown_count = 0;
+
+            /* PPI 0x61 */
+            } else if (port == 0x61) {
+                if (io->AccessInfo.IsWrite) ppi_61_last = (uint8_t)value;
+                else                        io->Rax = ppi_61_last;
                 port_log_io(io, "ppi61");
                 last_unknown = 0xffff; unknown_count = 0;
 
-            } else if (port == 0x63) { /* simple latch */
+            /* „latch“ 0x63 – pro XT klávesnici bývá využíván */
+            } else if (port == 0x63) {
                 if (io->AccessInfo.IsWrite) port_63_last = (uint8_t)value;
-                else io->Rax = port_63_last;
+                else                        io->Rax = port_63_last;
                 port_log_io(io, "ppi63");
                 last_unknown = 0xffff; unknown_count = 0;
 
-            } else if (port == 0x3D8 || port == 0x3B8) { /* CGA mode control */
+            /* CGA mode (0x3D8/0x3B8) */
+            } else if (port == 0x3D8 || port == 0x3B8) {
                 uint8_t *p = (port == 0x3D8) ? &cga3d8_last : &cga3b8_last;
                 if (io->AccessInfo.IsWrite) *p = (uint8_t)value;
-                else io->Rax = *p;
+                else                        io->Rax = *p;
                 port_log_io(io, "cga_mode");
                 last_unknown = 0xffff; unknown_count = 0;
-            }
-            else if (port == CODEX_NMI_PORT) {
-                if (io->AccessInfo.IsWrite) {
-                    codex_nmi_io_write(&core->nmi, (uint8_t)value);
-                    port_log_io(io, "nmi_write");
-                } else {
-                    io->Rax = codex_nmi_io_read(&core->nmi);
-                    port_log_io(io, "nmi");
+
+            /* CGA status 0x3DA (read-only) */
+            } else if (port == 0x3DA) {
+                if (!io->AccessInfo.IsWrite) {
+                    cga_status ^= 0x08;                  /* toggle VRETRACE */
+                    io->Rax = (uint8_t)(cga_status | 0x01); /* display enable */
                 }
-                last_unknown = 0xffff;
-                unknown_count = 0;
+                port_log_io(io, "cga_status");
+                last_unknown = 0xffff; unknown_count = 0;
+
+            /* DMA 8237 0x00–0x0F */
+            } else if (port <= 0x0F) {
+                uint16_t p = port & 0x0F;
+                if (io->AccessInfo.IsWrite) {
+                    switch (p) {
+                        case 0x08: dma_main_cmd = (uint8_t)value; break; /* Command */
+                        case 0x09: dma_req      = (uint8_t)value; break; /* Request */
+                        case 0x0A: dma_mask     = (uint8_t)value; break; /* Single Mask */
+                        case 0x0B: dma_mode     = (uint8_t)value; break; /* Mode */
+                        case 0x0C: dma_flipflop = 0; break;              /* Clear FF */
+                        case 0x0D: /* Master Clear */
+                            dma_temp = (uint8_t)value;
+                            dma_flipflop = 0;
+                            dma_mask = 0x0F;          /* zamaskovat všechny kanály */
+                            /* volitelně: vynulovat adresy/počty – zatím ne */
+                            break;
+                        case 0x0E: dma_clear    = (uint8_t)value; break; /* Clear Mask (all) */
+                        default: {
+                            int ch = (p >> 1) & 3;
+                            uint16_t* t = (p & 1) ? &dma_count[ch] : &dma_addr[ch];
+                            if (!dma_flipflop) { *t = (*t & 0xFF00) | (uint8_t)value; dma_flipflop = 1; }
+                            else               { *t = (*t & 0x00FF) | ((uint16_t)value << 8); dma_flipflop = 0; }
+                        } break;
+                    }
+                } else {
+                    uint8_t ret = 0;
+                    switch (p) {
+                        case 0x08: ret = dma_main_cmd; break;
+                        case 0x09: ret = dma_req; break;
+                        case 0x0A: ret = dma_mask; break;
+                        case 0x0B: ret = dma_mode; break;
+                        case 0x0C: ret = 0; dma_flipflop = 0; break; /* Read FF (a zároveň clear) */
+                        case 0x0D: ret = dma_temp; break;
+                        case 0x0E: ret = dma_clear; break;
+                        default: {
+                            int ch = (p >> 1) & 3;
+                            uint16_t t = (p & 1) ? dma_count[ch] : dma_addr[ch];
+                            ret = (!dma_flipflop) ? (uint8_t)(t & 0xFF) : (uint8_t)(t >> 8);
+                            dma_flipflop ^= 1;
+                        } break;
+                    }
+                    io->Rax = ret;
+                }
+                port_log_io(io, io->AccessInfo.IsWrite ? "dma_write" : "dma_read");
+                last_unknown = 0xffff; unknown_count = 0;
+
+            /* DMA page 0x80–0x8F (jen 0x80–0x87 mají význam v XT) */
+            } else if (port >= 0x80 && port <= 0x8F) {
+                uint8_t idx = (uint8_t)(port & 0x0F);
+                if (idx < 8) {
+                    if (io->AccessInfo.IsWrite) dma_page[idx] = (uint8_t)value;
+                    else                        io->Rax = dma_page[idx];
+                } else {
+                    if (!io->AccessInfo.IsWrite) io->Rax = 0xFF; /* default */
+                }
+                port_log_io(io, io->AccessInfo.IsWrite ? "dma_page_write" : "dma_page_read");
+                last_unknown = 0xffff; unknown_count = 0;
+
+            /* Neznámé porty */
             } else if (io->AccessInfo.IsWrite) {
                 port_log_io(io, "unhandled");
                 if (port == last_unknown) {
                     if (++unknown_count >= 16) return -1;
-                } else {
-                    last_unknown = port;
-                    unknown_count = 1;
-                }
+                } else { last_unknown = port; unknown_count = 1; }
+
             } else {
-                io->Rax = 0; /* return zero */
+                io->Rax = 0; /* default read */
                 port_log_io(io, "unhandled");
                 if (port == last_unknown) {
                     if (++unknown_count >= 16) return -1;
-                } else {
-                    last_unknown = port;
-                    unknown_count = 1;
-                }
+                } else { last_unknown = port; unknown_count = 1; }
             }
 
+            /* posun RIP + případně vrácení RAX po IN */
             WHV_REGISTER_NAME reg_names[2];
             WHV_REGISTER_VALUE reg_vals[2];
             reg_names[0] = WHvX64RegisterRip;
@@ -304,11 +377,13 @@ int codex_core_run(CodexCore* core) {
             }
             break;
         }
+
         case WHvRunVpExitReasonX64Halt:
-            /* continue running; PIT will wake on next tick */
+            /* běžíme dál — PIT nás vzbudí přes IRQ0 */
             break;
+
         case WHvRunVpExitReasonX64InterruptWindow:
-            /* CPU je připraven přijmout přerušení → doruč, pokud je pending */
+            /* CPU je připraven přijmout přerušení → pokus o injekci */
             codex_pic_try_inject(&core->pic, core);
             break;
 
@@ -317,42 +392,34 @@ int codex_core_run(CodexCore* core) {
             return -1;
         }
 
+        /* periodické věci */
         codex_pit_update(&core->pit, core);
         codex_pic_try_inject(&core->pic, core);
-        #ifdef _WIN32
-                LARGE_INTEGER _now; QueryPerformanceCounter(&_now);
-                if ((_now.QuadPart - _dbg_last.QuadPart) * 1000 / _dbg_freq.QuadPart >= 1000) {
-                    _dbg_last = _now;
-                    uint32_t cur = *bda_ticks;
-                    printf("BDA 0040:006C = %u (+%d/sec)\n", cur, (int)(cur - last_ticks));
-                    last_ticks = cur;
-                }
-        #endif
 
+#ifdef _WIN32
+        LARGE_INTEGER _now; QueryPerformanceCounter(&_now);
+        if ((_now.QuadPart - _dbg_last.QuadPart) * 1000 / _dbg_freq.QuadPart >= 1000) {
+            _dbg_last = _now;
+            uint32_t cur = *bda_ticks;
+            printf("BDA 0040:006C = %u (+%d/sec)\n", cur, (int)(cur - last_ticks));
+            last_ticks = cur;
+        }
+#endif
     }
 }
 
 #else /* !_WIN32 */
 
 int codex_core_init(CodexCore* core, const char* bios_path) {
-    (void)core;
-    (void)bios_path;
+    (void)core; (void)bios_path;
     fprintf(stderr, "codex_core_init: Windows platform required.\n");
     return -1;
 }
-
 int codex_core_load_program(CodexCore* core, const char* path, uint32_t offset) {
     (void)core; (void)path; (void)offset; return -1;
 }
-
-int codex_core_hypervisor_present(void) {
-    return 0;
-}
-
-void codex_core_destroy(CodexCore* core) {
-    (void)core;
-}
-
+int codex_core_hypervisor_present(void) { return 0; }
+void codex_core_destroy(CodexCore* core) { (void)core; }
 int codex_core_run(CodexCore* core) {
     (void)core;
     fprintf(stderr, "codex_core_run: Windows platform required.\n");
@@ -360,4 +427,3 @@ int codex_core_run(CodexCore* core) {
 }
 
 #endif
-

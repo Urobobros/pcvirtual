@@ -13,6 +13,7 @@
 
 static uint16_t pit_get_ch0(CodexPit* pit) {
 #ifdef _WIN32
+    if (!pit->ch0_programmed) return 0;
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     uint64_t ticks = (uint64_t)(now.QuadPart - pit->ch0_start.QuadPart);
@@ -46,6 +47,7 @@ void codex_pit_init(CodexPit* pit) {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     pit->reload = 0x10000; /* channel 0 default */
+    pit->ch0_programmed = 0;
     pit->ch0_rw = 3;
     pit->ch1_rw = 3;
     pit->period_ticks = (uint64_t)((double)pit->perf_freq.QuadPart * pit->reload / 1193182.0);
@@ -56,6 +58,15 @@ void codex_pit_init(CodexPit* pit) {
 #endif
 }
 
+#ifdef _WIN32
+static inline void pit_rearm_ch0(CodexPit* pit) {
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    pit->period_ticks = (uint64_t)((double)pit->perf_freq.QuadPart * (pit->reload ? pit->reload : 0x10000) / 1193182.0);
+    pit->next_fire.QuadPart = now.QuadPart + pit->period_ticks;
+    pit->ch0_start = now;
+}
+#endif
+
 void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
     if (!pit) return;
     switch (port) {
@@ -63,9 +74,18 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
         if (pit->ch0_rw == 1) {           /* LSB only */
             pit->reload = (pit->reload & 0xFF00) | value;
             if ((pit->reload & 0xFF) == 0 && (pit->reload & 0xFF00) == 0) pit->reload = 0x10000;
+            pit->ch0_programmed = 1;
+            #ifdef _WIN32
+                pit_rearm_ch0(pit);
+            #endif
+
         } else if (pit->ch0_rw == 2) {    /* MSB only */
             pit->reload = (pit->reload & 0x00FF) | ((uint32_t)value << 8);
             if ((pit->reload & 0xFFFF) == 0) pit->reload = 0x10000;
+            pit->ch0_programmed = 1;
+            #ifdef _WIN32
+                pit_rearm_ch0(pit);
+            #endif
         } else {                          /* LSB+MSB */
             if (!pit->expect_msb) {
                 pit->latch_lsb = value; pit->expect_msb = 1;
@@ -73,6 +93,10 @@ void codex_pit_io_write(CodexPit* pit, uint16_t port, uint8_t value) {
             }
             pit->reload = (uint32_t)(pit->latch_lsb | (value << 8));
             if (pit->reload == 0) pit->reload = 0x10000;
+            pit->ch0_programmed = 1;
+            #ifdef _WIN32
+                pit_rearm_ch0(pit);
+            #endif
         #ifdef _WIN32
             pit->period_ticks = (uint64_t)((double)pit->perf_freq.QuadPart * pit->reload / 1193182.0);
             LARGE_INTEGER now; QueryPerformanceCounter(&now);
