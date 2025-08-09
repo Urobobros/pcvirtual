@@ -1,55 +1,56 @@
+/* codex_pic.c */
+
 #include "codex_pic.h"
 #include "codex_core.h"
 
-#include <string.h>
-
-void codex_pic_init(CodexPic* pic) {
-    if (!pic) return;
-    pic8259_reset(&pic->master);
-    pic8259_reset(&pic->slave);
-    pic->slave.vector_base = 0x70; // typical PC BIOS default after init
-}
-
-void codex_pic_io_write(CodexPic* pic, uint16_t port, uint8_t value) {
-    if (!pic) return;
-    if (port >= 0x20 && port <= 0x21) {
-        pic8259_write(&pic->master, port, value);
-    } else if (port >= 0xA0 && port <= 0xA1) {
-        pic8259_write(&pic->slave, port, value);
-    }
-}
-
-uint8_t codex_pic_io_read(CodexPic* pic, uint16_t port) {
-    if (!pic) return 0xFF;
-    if (port >= 0x20 && port <= 0x21) {
-        return pic8259_read(&pic->master, port);
-    } else if (port >= 0xA0 && port <= 0xA1) {
-        return pic8259_read(&pic->slave, port);
-    }
-    return 0xFF;
-}
-
-void codex_pic_raise_irq(CodexPic* pic, struct CodexCore* core, uint8_t irq) {
-    if (!pic || !core) return;
-
-    if (irq < 8) {
-        pic8259_raise_irq(&pic->master, irq);
-        if (!pic8259_has_pending_unmasked(&pic->master))
-            return;
-        uint8_t vector = pic8259_acknowledge(&pic->master);
 #ifdef _WIN32
-        WHV_INTERRUPT_CONTROL ctrl;
-        memset(&ctrl, 0, sizeof(ctrl));
-        ctrl.Type = WHvX64InterruptTypeFixed;
-        ctrl.Vector = vector;
-        ctrl.TargetVtl = 0;
-        WHvRequestInterrupt(core->partition, &ctrl, sizeof(ctrl));
-#else
-        (void)vector; (void)core;
+#include <WinHvPlatform.h>
+#include <WinHvPlatformDefs.h>
 #endif
-    } else {
-        // IRQs >=8 go to the slave. Devices using them are not yet modelled.
-        pic8259_raise_irq(&pic->slave, irq - 8);
-    }
+
+
+// Pomocná injekce do WHPX
+static void inject_vector(struct CodexCore* core, uint8_t vector) {
+#ifdef _WIN32
+    WHV_INTERRUPT_CONTROL ic = {0};
+    // Nové API: WHvRequestInterrupt plochý WHV_INTERRUPT_CONTROL
+    ic.Type           = WHvX64InterruptTypeFixed;
+    ic.DestinationMode= WHvX64InterruptDestinationModePhysical;
+    ic.TriggerMode    = WHvX64InterruptTriggerModeEdge;
+    ic.Vector         = vector;          // např. 0x08 pro IRQ0
+    ic.Destination    = 1ull << 0;       // vCPU maska: cíl = VP #0
+    // Třetí argument je velikost struktury (viz WinHvPlatform.h)
+    (void)WHvRequestInterrupt(core->partition, &ic, sizeof(ic));
+#else
+    (void)core; (void)vector;
+#endif
 }
 
+void codex_pic_try_inject(CodexPic* cpic, struct CodexCore* core) {
+    if (!cpic || !core) return;
+
+    // Má PIC něco nemaskovaného pending?
+    if (!pic8259_has_pending_unmasked(&cpic->pic))
+        return;
+
+    // Přesun z IRR do ISR a získání vektoru
+    uint8_t vec = pic8259_acknowledge(&cpic->pic);
+    if (vec == 0xFF) return;
+
+    inject_vector(core, vec);
+}
+
+void codex_pic_raise_irq(CodexPic* cpic, struct CodexCore* core, int line) {
+    if (!cpic) return;
+    pic8259_raise_irq(&cpic->pic, line);
+
+    // Pokus o okamžité doručení – když je guest ready, dostane hned
+    codex_pic_try_inject(cpic, core);
+}
+
+void codex_pic_pulse_irq(CodexPic* cpic, struct CodexCore* core, int line) {
+    if (!cpic) return;
+    pic8259_raise_irq(&cpic->pic, line);
+    codex_pic_try_inject(cpic, core);
+    pic8259_lower_irq(&cpic->pic, line); // uvolni hranu pro další tick
+}

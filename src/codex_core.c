@@ -1,3 +1,5 @@
+/* codex_core.c */
+
 #include "codex_core.h"
 #include "codex_pit.h"
 #include "codex_pic.h"
@@ -9,7 +11,11 @@
 #include <string.h>
 
 #ifdef _WIN32
+#ifdef _MSC_VER
 #pragma comment(lib, "WinHvPlatform.lib")
+#endif
+
+static uint8_t ppi_61_last = 0, port_63_last = 0, cga3d8_last = 0, cga3b8_last = 0;
 
 static const uint64_t GPA_LIMIT = 0x00100000; /* 1 MB */
 
@@ -192,6 +198,14 @@ int codex_core_run(CodexCore* core) {
     uint16_t last_unknown = 0xffff;
     unsigned unknown_count = 0;
 
+    #ifdef _WIN32
+        LARGE_INTEGER _dbg_freq, _dbg_last;
+        QueryPerformanceFrequency(&_dbg_freq);
+        QueryPerformanceCounter(&_dbg_last);
+        uint32_t* bda_ticks = (uint32_t*)((uint8_t*)core->memory + 0x046C);
+        uint32_t  last_ticks = *bda_ticks;
+    #endif
+
     while (1) {
         WHV_RUN_VP_EXIT_CONTEXT exit_ctx;
         HRESULT hr = WHvRunVirtualProcessor(core->partition, 0, &exit_ctx, sizeof(exit_ctx));
@@ -213,7 +227,7 @@ int codex_core_run(CodexCore* core) {
                 port_log_io(io, "pit");
                 last_unknown = 0xffff;
                 unknown_count = 0;
-            } else if (port == 0x20 || port == 0x21 || port == 0xA1) {
+            } else if (port == 0x20 || port == 0x21) {
                 if (io->AccessInfo.IsWrite) {
                     codex_pic_io_write(&core->pic, port, (uint8_t)value);
                 } else {
@@ -222,7 +236,29 @@ int codex_core_run(CodexCore* core) {
                 port_log_io(io, "pic");
                 last_unknown = 0xffff;
                 unknown_count = 0;
-            } else if (port == CODEX_NMI_PORT) {
+            } 
+            else if (port == 0x61) { /* PPI port B / speaker ctrl */
+                if (io->AccessInfo.IsWrite) 
+                    ppi_61_last = (uint8_t)value;
+                else 
+                    io->Rax = ppi_61_last;
+                port_log_io(io, "ppi61");
+                last_unknown = 0xffff; unknown_count = 0;
+
+            } else if (port == 0x63) { /* simple latch */
+                if (io->AccessInfo.IsWrite) port_63_last = (uint8_t)value;
+                else io->Rax = port_63_last;
+                port_log_io(io, "ppi63");
+                last_unknown = 0xffff; unknown_count = 0;
+
+            } else if (port == 0x3D8 || port == 0x3B8) { /* CGA mode control */
+                uint8_t *p = (port == 0x3D8) ? &cga3d8_last : &cga3b8_last;
+                if (io->AccessInfo.IsWrite) *p = (uint8_t)value;
+                else io->Rax = *p;
+                port_log_io(io, "cga_mode");
+                last_unknown = 0xffff; unknown_count = 0;
+            }
+            else if (port == CODEX_NMI_PORT) {
                 if (io->AccessInfo.IsWrite) {
                     codex_nmi_io_write(&core->nmi, (uint8_t)value);
                     port_log_io(io, "nmi_write");
@@ -271,12 +307,28 @@ int codex_core_run(CodexCore* core) {
         case WHvRunVpExitReasonX64Halt:
             /* continue running; PIT will wake on next tick */
             break;
+        case WHvRunVpExitReasonX64InterruptWindow:
+            /* CPU je připraven přijmout přerušení → doruč, pokud je pending */
+            codex_pic_try_inject(&core->pic, core);
+            break;
+
         default:
             printf("Unhandled exit: %u\n", exit_ctx.ExitReason);
             return -1;
         }
 
         codex_pit_update(&core->pit, core);
+        codex_pic_try_inject(&core->pic, core);
+        #ifdef _WIN32
+                LARGE_INTEGER _now; QueryPerformanceCounter(&_now);
+                if ((_now.QuadPart - _dbg_last.QuadPart) * 1000 / _dbg_freq.QuadPart >= 1000) {
+                    _dbg_last = _now;
+                    uint32_t cur = *bda_ticks;
+                    printf("BDA 0040:006C = %u (+%d/sec)\n", cur, (int)(cur - last_ticks));
+                    last_ticks = cur;
+                }
+        #endif
+
     }
 }
 

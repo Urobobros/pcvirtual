@@ -1,3 +1,5 @@
+/* pic8259.h */
+
 #pragma once
 // 8259 Programmable Interrupt Controller (master/slave)
 // Minimal XT-compatible implementation for WHPX-based emulator
