@@ -17,6 +17,12 @@ codex: $(SRC) include/codex_core.h
 	$(CC) $(CFLAGS) $(SRC) -Iinclude -o $@ $(LDFLAGS) $(LIBS)
 
 clean:
-	rm -f codex
+	rm -f codex pit_test
 
-.PHONY: clean
+pit_test: src/codex_pit.c tests/pit_test.c include/codex_pit.h
+	$(CC) $(CFLAGS) -Iinclude src/codex_pit.c tests/pit_test.c -o $@
+
+test: pit_test
+	./pit_test
+
+.PHONY: clean test pit_test
