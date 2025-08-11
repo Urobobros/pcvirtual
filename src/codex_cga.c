@@ -1,6 +1,4 @@
 #include "codex_cga.h"
-#include "font8x8_basic.h"
-
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,10 +8,8 @@
 #include <windows.h>
 #endif
 
-#define CGA_COLS 80
-#define CGA_ROWS 25
-#define CGA_WIDTH  (CGA_COLS * 8)
-#define CGA_HEIGHT (CGA_ROWS * 8)
+#define CGA_WIDTH  320
+#define CGA_HEIGHT 200
 
 struct CodexCga {
     uint8_t* mem;
@@ -23,11 +19,11 @@ struct CodexCga {
     uint32_t pixels[CGA_WIDTH * CGA_HEIGHT];
 };
 
-static const uint32_t cga_palette[16] = {
-    0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA,
-    0xFFAA0000, 0xFFAA00AA, 0xFFAA5500, 0xFFAAAAAA,
-    0xFF555555, 0xFF5555FF, 0xFF55FF55, 0xFF55FFFF,
-    0xFFFF5555, 0xFFFF55FF, 0xFFFFFF55, 0xFFFFFFFF
+static const uint32_t cga_palette[4] = {
+    0xFF000000, /* black */
+    0xFF00AAAA, /* cyan */
+    0xFFAA00AA, /* magenta */
+    0xFFFFFFFF  /* white */
 };
 
 
@@ -88,42 +84,19 @@ void codex_cga_update(CodexCga* c) {
 #endif
     }
     uint8_t* vram = c->mem + 0xB8000;
-    for (int r = 0; r < CGA_ROWS; ++r) {
-        for (int ccol = 0; ccol < CGA_COLS; ++ccol) {
-            int offset = 2 * (r * CGA_COLS + ccol);
-            uint8_t ch = vram[offset];
-            uint8_t attr = vram[offset + 1];
-            uint32_t fg = cga_palette[attr & 0x0F];
-            uint32_t bg = cga_palette[(attr >> 4) & 0x07];
-            for (int y = 0; y < 8; ++y) {
-                uint8_t bits = (uint8_t)font8x8_basic[ch][y];
-                for (int x = 0; x < 8; ++x) {
-                    uint32_t color = (bits & (1 << x)) && !(attr & 0x80) ? fg : bg;
-                    c->pixels[(r * 8 + y) * CGA_WIDTH + ccol * 8 + x] = color;
-                }
-            }
+    for (int y = 0; y < CGA_HEIGHT; ++y) {
+        uint8_t* line = vram + ((y & 1) ? 0x2000 : 0) + (y >> 1) * 80;
+        for (int x = 0; x < CGA_WIDTH; x += 4) {
+            uint8_t b = line[x >> 2];
+            c->pixels[y * CGA_WIDTH + x + 0] = cga_palette[(b >> 6) & 3];
+            c->pixels[y * CGA_WIDTH + x + 1] = cga_palette[(b >> 4) & 3];
+            c->pixels[y * CGA_WIDTH + x + 2] = cga_palette[(b >> 2) & 3];
+            c->pixels[y * CGA_WIDTH + x + 3] = cga_palette[(b >> 0) & 3];
         }
     }
     SDL_UpdateTexture(c->texture, NULL, c->pixels, CGA_WIDTH * sizeof(uint32_t));
     SDL_RenderClear(c->renderer);
     SDL_RenderCopy(c->renderer, c->texture, NULL, NULL);
     SDL_RenderPresent(c->renderer);
-}
-
-void codex_cga_dump_text(CodexCga* c, const char* path) {
-    if (!c || !path) return;
-    FILE* f = fopen(path, "w");
-    if (!f) return;
-    uint8_t* vram = c->mem + 0xB8000;
-    for (int r = 0; r < CGA_ROWS; ++r) {
-        for (int ccol = 0; ccol < CGA_COLS; ++ccol) {
-            int offset = 2 * (r * CGA_COLS + ccol);
-            uint8_t ch = vram[offset];
-            if (ch < 32 || ch > 126) ch = '.';
-            fputc(ch, f);
-        }
-        fputc('\n', f);
-    }
-    fclose(f);
 }
 

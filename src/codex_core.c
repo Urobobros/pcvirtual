@@ -407,7 +407,6 @@ int codex_core_run(CodexCore* core)
         codex_pit_update(&core->pit, core);
         codex_pic_try_inject(&core->pic, core);
         codex_cga_update(core->cga);
-        codex_cga_dump_text(core->cga, "cga_dump.txt");
     }
 
 #else
