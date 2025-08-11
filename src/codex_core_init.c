@@ -1,7 +1,8 @@
 /* codex_core_init.c */
 
-#include <codex_core.h>
+#include "codex_core.h"
 #include <stdio.h>
+#include <string.h>
 
 static const uint64_t GPA_LIMIT = 0x00100000; /* 1 MB */
 
@@ -32,7 +33,6 @@ void codex_core_destroy(CodexCore* core) {
     }
 }
 
-/* Pomocná: zrcadlení BIOSu do celé F0000-FFFFF oblasti */
 static void mirror_bios_region(uint8_t* base, size_t size) {
     if (size == 0) return;
     for (size_t pos = size; pos < 0x10000; pos += size)
@@ -43,7 +43,6 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     if (!core) return -1;
     memset(core, 0, sizeof(*core));
 
-    /* Načtení BIOSu */
     const char* path = bios_path;
     FILE* bios = fopen(path, "rb");
     if (!bios && strcmp(path, "ami_8088_bios_31jan89.bin") == 0) {
@@ -89,7 +88,6 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     printf("Reset vector bytes: %02X %02X %02X %02X %02X\n",
            mem[0xFFFF0], mem[0xFFFF1], mem[0xFFFF2], mem[0xFFFF3], mem[0xFFFF4]);
 
-    /* Vytvořit/naplnit partition */
     HRESULT hr = WHvCreatePartition(&core->partition);
     if (FAILED(hr)) {
         fprintf(stderr, "WHvCreatePartition failed: 0x%lx\n", hr);
@@ -99,8 +97,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     WHV_PARTITION_PROPERTY prop;
     memset(&prop, 0, sizeof(prop));
     prop.ProcessorCount = 1;
-    hr = WHvSetPartitionProperty(core->partition, WHvPartitionPropertyCodeProcessorCount,
-                                 &prop, sizeof(prop));
+    hr = WHvSetPartitionProperty(core->partition, WHvPartitionPropertyCodeProcessorCount, &prop, sizeof(prop));
     if (FAILED(hr)) {
         fprintf(stderr, "WHvSetPartitionProperty failed: 0x%lx\n", hr);
         return -1;
@@ -119,7 +116,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
-    /* Mirrornout první MB na 0x100000—0x1FFFFF kvůli wrapu v reálném režimu */
+    /* mirror first MB at +1MB to emulate wrap */
     hr = WHvMapGpaRange(core->partition, core->memory, core->memory_size, core->memory_size,
                         WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hr)) {
@@ -133,7 +130,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
-    /* Inicializace CS:IP = F000:FFF0, FLAGS=0x2 a segmentů */
+    /* real-mode reset state */
     WHV_REGISTER_NAME names[6];
     WHV_REGISTER_VALUE values[6];
     memset(values, 0, sizeof(values));
@@ -157,7 +154,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
 
-    /* Zařízení */
+    /* devices */
     codex_pit_init(&core->pit);
     codex_pic_init(&core->pic);
     if (codex_nmi_init(&core->nmi) < 0) {

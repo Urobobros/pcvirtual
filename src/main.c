@@ -1,3 +1,5 @@
+/* codex main.c */
+
 #include "codex_core.h"
 #include <stdio.h>
 #include <string.h>

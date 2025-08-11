@@ -4,39 +4,62 @@
 
 #ifdef _WIN32
 #include <stdio.h>
+#include <stdint.h>
 #include <windows.h>
 
-static LARGE_INTEGER _dbg_freq = {0};  // Přidání proměnné pro měření frekvence
+/* POZN.: předpokládám, že WHV_X64_IO_PORT_ACCESS_CONTEXT je deklarován v port_log.h
+   nebo někde globálně v projektu. */
 
-void port_log_io(const WHV_X64_IO_PORT_ACCESS_CONTEXT* io, const char* tag) {
-#if defined(_DEBUG) || defined(PORT_DEBUG)
-    const char* dir = io->AccessInfo.IsWrite ? "OUT" : "IN ";
-    uint8_t size = io->AccessInfo.AccessSize;
-    uint32_t value = (uint32_t)io->Rax;
+/* Stav loggeru */
+static LARGE_INTEGER g_freq = {0};
+static uint64_t      g_t0   = 0;     /* QPC start */
+static uint64_t      g_idx  = 0;     /* běžící index řádku */
 
-    // Inicializace frekvence, pokud ještě nebyla nastavena
-    if (_dbg_freq.QuadPart == 0) {
-        QueryPerformanceFrequency(&_dbg_freq);
+/* ms od prvního volání (QPC) */
+static double _now_ms(void)
+{
+    if (!g_freq.QuadPart)
+        QueryPerformanceFrequency(&g_freq);
+
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+
+    if (!g_t0)
+        g_t0 = (uint64_t)now.QuadPart;
+
+    return ((double)((uint64_t)now.QuadPart - g_t0) * 1000.0) / (double)g_freq.QuadPart;
+}
+
+/* Helper: hezké vypsání hodnoty podle velikosti */
+static void _fmt_val(char *out, size_t n, uint8_t size, uint32_t value)
+{
+    switch (size) {
+        case 1:  _snprintf(out, n, "0x%02X",  (unsigned)(value & 0xFFu));    break;
+        case 2:  _snprintf(out, n, "0x%04X",  (unsigned)(value & 0xFFFFu));  break;
+        default: _snprintf(out, n, "0x%08X",  (unsigned)(value));            break;
     }
+}
 
-    // Logování času mezi operacemi
-    static LARGE_INTEGER _last_time = {0};
-    LARGE_INTEGER _now;
-    QueryPerformanceCounter(&_now);
-    uint64_t time_diff = (_now.QuadPart - _last_time.QuadPart) * 1000 / _dbg_freq.QuadPart;
-    printf("Time Diff: %llu ms\n", time_diff);
-    _last_time = _now;
+void port_log_io(const WHV_X64_IO_PORT_ACCESS_CONTEXT* io, const char* tag)
+{
+#if defined(_DEBUG) || defined(PORT_DEBUG)
+    const char *dir = io->AccessInfo.IsWrite ? "OUT" : "IN ";
+    const uint8_t size = io->AccessInfo.AccessSize;
+    const uint16_t port = io->PortNumber;
+    const uint32_t value = (uint32_t)io->Rax;
 
-    if (size == 1)
-        printf("%s port 0x%04X, size 1, value 0x%02X  # %s\n", dir, io->PortNumber, value & 0xFF, tag);
-    else if (size == 2)
-        printf("%s port 0x%04X, size 2, value 0x%04X  # %s\n", dir, io->PortNumber, value & 0xFFFF, tag);
-    else
-        printf("%s port 0x%04X, size %u, value 0x%08X  # %s\n", dir, io->PortNumber, size, value, tag);
+    char vbuf[16];
+    _fmt_val(vbuf, sizeof(vbuf), size, value);
+
+    const double ms = _now_ms();
+    printf("index: %llu %s port 0x%04X, size %u, value %s  # %s [%10.3f ms]\n",
+           (unsigned long long)g_idx++,
+           dir, port, (unsigned)size, vbuf,
+           tag ? tag : "",
+           ms);
 #else
     (void)io; (void)tag;
 #endif
 }
-#endif
 
-
+#endif /* _WIN32 */
