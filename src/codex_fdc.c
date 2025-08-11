@@ -28,7 +28,8 @@ static void set_result(CodexFdc* fdc, const uint8_t* buf, int len) {
     fdc->result_len = len;
     fdc->result_pos = 0;
     fdc->state = FDC_STATE_RESULT;
-    fdc->msr = 0xC0; /* RQM|DIO */
+    /* RQM|DIO|BUSY while results remain */
+    fdc->msr = 0xD0;
 }
 
 static void finish_command(CodexFdc* fdc) {
@@ -50,6 +51,13 @@ static void exec_command(CodexFdc* fdc) {
         fdc->pcn_irq = 0;
         raise_irq(fdc);
         finish_command(fdc);
+        break; }
+    case 0x04: { /* SENSE DRIVE STATUS */
+        int drive = fdc->params[0] & 3;
+        uint8_t st3 = 0x20 | drive; /* drive ready */
+        if (fdc->track[drive] == 0) st3 |= 0x10;
+        uint8_t res[1] = { st3 };
+        set_result(fdc, res, 1);
         break; }
     case 0x0F: { /* SEEK */
         int drive = fdc->params[0] & 3;
@@ -88,7 +96,6 @@ static void exec_command(CodexFdc* fdc) {
         uint8_t res[7] = { fdc->st0, fdc->st1, fdc->st2, track, (uint8_t)head, sector, size_code };
         set_result(fdc, res, 7);
         raise_irq(fdc);
-        finish_command(fdc);
         break; }
     default:
         finish_command(fdc);
@@ -166,10 +173,8 @@ uint8_t codex_fdc_io_read(CodexFdc* fdc, uint16_t port) {
     case 0x3F5:
         if (fdc->state == FDC_STATE_RESULT && fdc->result_pos < fdc->result_len) {
             uint8_t v = fdc->result[fdc->result_pos++];
-            if (fdc->result_pos >= fdc->result_len) {
-                fdc->state = FDC_STATE_COMMAND;
-                fdc->msr = 0x80;
-            }
+            if (fdc->result_pos >= fdc->result_len)
+                finish_command(fdc);
             return v;
         }
         return 0;
@@ -196,10 +201,11 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
             fdc->cmd = value;
             fdc->param_count = 0;
             switch (fdc->cmd & 0x1F) {
-            case 0x03: fdc->param_expected = 2; fdc->state = FDC_STATE_PARAMS; break;
-            case 0x07: fdc->param_expected = 1; fdc->state = FDC_STATE_PARAMS; break;
-            case 0x0F: fdc->param_expected = 2; fdc->state = FDC_STATE_PARAMS; break;
-            case 0x06: fdc->param_expected = 8; fdc->state = FDC_STATE_PARAMS; break;
+            case 0x03: fdc->param_expected = 2; fdc->state = FDC_STATE_PARAMS; fdc->msr = 0x90; break;
+            case 0x04: fdc->param_expected = 1; fdc->state = FDC_STATE_PARAMS; fdc->msr = 0x90; break;
+            case 0x07: fdc->param_expected = 1; fdc->state = FDC_STATE_PARAMS; fdc->msr = 0x90; break;
+            case 0x0F: fdc->param_expected = 2; fdc->state = FDC_STATE_PARAMS; fdc->msr = 0x90; break;
+            case 0x06: fdc->param_expected = 8; fdc->state = FDC_STATE_PARAMS; fdc->msr = 0x90; break;
             case 0x08: fdc->param_expected = 0; exec_command(fdc); break;
             default: fdc->param_expected = 0; finish_command(fdc); break;
             }
