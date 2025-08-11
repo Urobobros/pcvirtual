@@ -1,9 +1,6 @@
 /* codex_core.c */
 
 #include "codex_core.h"
-#include "codex_pit.h"
-#include "codex_pic.h"
-#include "codex_nmi.h"
 #include "port_log.h"
 
 #include <stdio.h>
@@ -81,21 +78,7 @@ static bool try_forced_read(uint32_t idx, uint16_t port, uint8_t* out_val) {
 
 #ifdef _WIN32
 #if !FORCE_IO_SCRIPT
-/* simple shadow regs */
-static uint8_t ppi_61_last = 0, port_63_last = 0;
-static uint8_t cga3d8_last = 0, cga3b8_last = 0;
-static uint8_t cga_status  = 0;
-
-/* 8237 DMA (very small stub) */
-static uint8_t  dma_main_cmd = 0, dma_req = 0, dma_mask = 0x0F, dma_mode = 0;
-static uint8_t  dma_temp = 0, dma_clear = 0;
-static uint8_t  dma_page[8] = {0};   /* 0x80–0x87 */
-static uint16_t dma_addr[4] = {0}, dma_count[4] = {0};
-static uint8_t  dma_flipflop = 0;
-
 #define GUEST_RAM_KB 640
-static const uint8_t port62_mem_nibble =
-    (uint8_t)((GUEST_RAM_KB - 64) / 32); /* 640k -> 0x12 => hi=1, lo=2 */
 #endif /* !FORCE_IO_SCRIPT */
 
 /* Stav pro omezené logování IF/shadow */
@@ -276,56 +259,15 @@ int codex_core_run(CodexCore* core)
                 }
                 port_log_io(io, "cga_status");
 
-            /* --- DMA prvních 16 portů ---------------------------------------- */
+            /* --- DMA kontroler (0x00–0x0F) ----------------------------------- */
             } else if (port <= 0x0F) {
-                static uint8_t  dma_main_cmd_local = 0, dma_req_local = 0;
-                static uint8_t  dma_mask_local = 0x0F, dma_mode_local = 0;
-                static uint8_t  dma_temp_local = 0, dma_clear_local = 0;
-                static uint8_t  dma_page_local[8] = {0};
-                static uint16_t dma_addr_local[4] = {0}, dma_count_local[4] = {0};
-                static uint8_t  dma_flipflop_local = 0;
-
-                uint16_t p = port & 0x0F;
                 if (isWrite) {
-                    switch (p) {
-                        case 0x08: dma_main_cmd_local = (uint8_t)value; break;
-                        case 0x09: dma_req_local = (uint8_t)value; break;
-                        case 0x0A: dma_mask_local = (uint8_t)value; break;
-                        case 0x0B: dma_mode_local = (uint8_t)value; break;
-                        case 0x0C: dma_flipflop_local = 0; break;
-                        case 0x0D:
-                            dma_temp_local = (uint8_t)value;
-                            dma_flipflop_local = 0;
-                            dma_mask_local = 0x0F;
-                            break;
-                        case 0x0E: dma_clear_local = (uint8_t)value; break;
-                        default: {
-                            int ch = (p >> 1) & 3;
-                            uint16_t* t = (p & 1) ? &dma_count_local[ch] : &dma_addr_local[ch];
-                            if (!dma_flipflop_local) { *t = (*t & 0xFF00) | (uint8_t)value; dma_flipflop_local = 1; }
-                            else                     { *t = (*t & 0x00FF) | ((uint16_t)value << 8); dma_flipflop_local = 0; }
-                        } break;
-                    }
+                    dma_io_write(&core->dma, port, (uint8_t)value);
+                    port_log_io(io, "dma_write");
                 } else {
-                    uint8_t ret = 0;
-                    switch (p) {
-                        case 0x08: ret = dma_main_cmd_local; break;
-                        case 0x09: ret = dma_req_local; break;
-                        case 0x0A: ret = dma_mask_local; break;
-                        case 0x0B: ret = dma_mode_local; break;
-                        case 0x0C: ret = 0; dma_flipflop_local = 0; break;
-                        case 0x0D: ret = dma_temp_local; break;
-                        case 0x0E: ret = dma_clear_local; break;
-                        default: {
-                            int ch = (p >> 1) & 3;
-                            uint16_t t = (p & 1) ? dma_count_local[ch] : dma_addr_local[ch];
-                            ret = (!dma_flipflop_local) ? (uint8_t)(t & 0xFF) : (uint8_t)(t >> 8);
-                            dma_flipflop_local ^= 1;
-                        }
-                    }
-                    io->Rax = ret;
+                    io->Rax = dma_io_read(&core->dma, port);
+                    port_log_io(io, "dma_read");
                 }
-                port_log_io(io, isWrite ? "dma_write" : "dma_read");
 
             } else if (port == 0x80) {                   // POST port
                 if (isWrite) {
@@ -336,15 +278,12 @@ int codex_core_run(CodexCore* core)
                 }
                 port_log_io(io, "post");
 
-            /* --- DMA page 0x80–0x8F ------------------------------------------ */
+            /* --- DMA stránkové registry 0x80–0x8F ----------------------------- */
             } else if (port >= 0x80 && port <= 0x8F) {
-                static uint8_t dma_page_local2[8] = {0};
-                uint8_t idx = (uint8_t)(port & 0x0F);
-                if (idx < 8) {
-                    if (isWrite) dma_page_local2[idx] = (uint8_t)value;
-                    else         io->Rax = dma_page_local2[idx];
+                if (isWrite) {
+                    dma_io_write(&core->dma, port, (uint8_t)value);
                 } else {
-                    if (!isWrite) io->Rax = 0xFF;
+                    io->Rax = dma_io_read(&core->dma, port);
                 }
                 port_log_io(io, isWrite ? "dma_page_write" : "dma_page_read");
 

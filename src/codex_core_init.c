@@ -160,6 +160,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
     if (codex_nmi_init(&core->nmi) < 0) {
         return -1;
     }
+    dma_init(&core->dma);
 
     return 0;
 }
