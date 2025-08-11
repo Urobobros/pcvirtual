@@ -181,20 +181,20 @@ int codex_core_run(CodexCore* core)
             } else if (port == 0xA0) {
                 if (isWrite) {
                     codex_nmi_io_write(&core->nmi, (uint8_t)value);
-                    port_log_io(io, "nmi_write");
                 } else {
                     io->Rax = codex_nmi_io_read(&core->nmi);
-                    port_log_io(io, "nmi_read");
                 }
+                port_log_io(io, isWrite ? "nmi_write" : "nmi_read");
 
             /* --- PIC 8259A 0x20/0x21 ----------------------------------------- */
             } else if (port == 0x20 || port == 0x21) {
                 if (isWrite) {
                     codex_pic_io_write(&core->pic, port, (uint8_t)value);
                 } else {
+                    
                     io->Rax = codex_pic_io_read(&core->pic, port);
                 }
-                port_log_io(io, "pic");
+                port_log_io(io, isWrite ? "pic_write" : "pic_read");
 
                 /* Po konfiguraci/EOI/IMR změnách hned zkusit injekci */
                 codex_pic_try_inject(&core->pic, core);
@@ -211,14 +211,13 @@ int codex_core_run(CodexCore* core)
                         (ppi_61_last & 0x01) != 0,
                         ((prev & 0x01) == 0) && ((ppi_61_last & 0x01) != 0));
 
-                    port_log_io(io, "ppi61");
                 } else {
                     static uint8_t ppi_61_last_ro = 0;
                     /* bit5 = OUT2 z PIT CH2 */
                     uint8_t out2 = codex_pit_out2(&core->pit) ? 0x20 : 0x00;
                     io->Rax = (ppi_61_last_ro & (uint8_t)~0x20) | out2;
-                    port_log_io(io, "ppi61");
                 }
+                port_log_io(io, isWrite ? "ppi61_write" : "ppi61_read");
 
             /* --- SYS_PORTC 0x62 ---------------------------------------------- */
             } else if (port == 0x62) {
@@ -263,11 +262,10 @@ int codex_core_run(CodexCore* core)
             } else if (port <= 0x0F) {
                 if (isWrite) {
                     dma_io_write(&core->dma, port, (uint8_t)value);
-                    port_log_io(io, "dma_write");
                 } else {
                     io->Rax = dma_io_read(&core->dma, port);
-                    port_log_io(io, "dma_read");
                 }
+                port_log_io(io,isWrite ? "dma_write" : "dma_read");
 
             } else if (port == 0x80) {                   // POST port
                 if (isWrite) {
@@ -290,11 +288,11 @@ int codex_core_run(CodexCore* core)
             /* --- Ostatní porty: default -------------------------------------- */
             } else {
                 if (isWrite) {
-                    port_log_io(io, "unhandled");
                 } else {
                     io->Rax = 0;
-                    port_log_io(io, "unhandled");
+
                 }
+                port_log_io(io, isWrite ? "unhandled_write" : "unhandled_read");
             }
 
 #endif /* FORCE_IO_SCRIPT */
