@@ -168,7 +168,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
     dma_init(&core->dma);
-    codex_fdc_init(&core->fdc, core, "floppy.img");
+    codex_fdc_init(&core->fdc, core, "IBM DOS 2.10_s0.img");
     core->cga = codex_cga_create(core->memory);
 
     return 0;

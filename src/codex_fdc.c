@@ -102,6 +102,7 @@ int codex_fdc_init(CodexFdc* fdc, CodexCore* core, const char* image_path) {
     fdc->core = core;
     fdc->msr = 0x80;
     fdc->sector_size = 512;
+    /* default geometry 1.44MB */
     fdc->heads = 2;
     fdc->sectors_per_track = 18;
     fdc->tracks = 80;
@@ -115,6 +116,36 @@ int codex_fdc_init(CodexFdc* fdc, CodexCore* core, const char* image_path) {
             if (fdc->disk) {
                 fread(fdc->disk, 1, sz, f);
                 fdc->disk_size = sz;
+                /* guess geometry based on common floppy sizes */
+                switch (fdc->disk_size) {
+                case 184320: /* 180K 5.25" SS */
+                    fdc->heads = 1;
+                    fdc->sectors_per_track = 9;
+                    fdc->tracks = 40;
+                    break;
+                case 368640: /* 360K 5.25" DS */
+                    fdc->heads = 2;
+                    fdc->sectors_per_track = 9;
+                    fdc->tracks = 40;
+                    break;
+                case 737280: /* 720K 3.5" DS */
+                    fdc->heads = 2;
+                    fdc->sectors_per_track = 9;
+                    fdc->tracks = 80;
+                    break;
+                case 1228800: /* 1.2M 5.25" */
+                    fdc->heads = 2;
+                    fdc->sectors_per_track = 15;
+                    fdc->tracks = 80;
+                    break;
+                case 1474560: /* 1.44M 3.5" */
+                    fdc->heads = 2;
+                    fdc->sectors_per_track = 18;
+                    fdc->tracks = 80;
+                    break;
+                default:
+                    break; /* keep defaults */
+                }
             }
             fclose(f);
         }
