@@ -19,7 +19,7 @@
 
 
 #ifndef IO_DEBUG_RAX
-#define IO_DEBUG_RAX 1   /* 1 = zapnout debug RAX merge logy, 0 = vypnout */
+#define IO_DEBUG_RAX 0   /* 1 = zapnout debug RAX merge logy, 0 = vypnout */
 #endif
 
 static inline unsigned io_bytes_from_access_size(UINT8 accessSize)
@@ -297,11 +297,6 @@ int codex_core_run(CodexCore* core)
                 }
             }
 
-            /* DEBUG výpis pro IN – hodnota, která se vrátí BIOSu */
-            if (!isWrite) {
-                printf("[DEBUG] IN z portu 0x%04X => AL=0x%02X\n",
-                    io->PortNumber, (unsigned)(io->Rax & 0xFF));
-            }
 #endif /* FORCE_IO_SCRIPT */
 
             /* ---------------- Posun RIP a vrácení RAX (pro IN) ---------------- */
