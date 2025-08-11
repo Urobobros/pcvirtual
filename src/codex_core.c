@@ -222,13 +222,20 @@ int codex_core_run(CodexCore* core)
 
             /* --- SYS_PORTC 0x62 ---------------------------------------------- */
             } else if (port == 0x62) {
-                /* RAM size nibbly řízené bitem 2 z 61h */
+                /* DIP switches read via PPI port C */
                 const uint8_t port62_mem_nibble =
                     (uint8_t)((GUEST_RAM_KB - 64) / 32);
-                uint8_t valr = (ppi_61_last & 0x04)
+                uint8_t valr;
+                if (ppi_61_last & 0x08) {
+                    /* bit3=1 selects disk/video DIP group. 1 drive, color 80x25 */
+                    valr = 0x04;
+                } else {
+                    /* bit3=0 selects memory-size nibble */
+                    valr = (ppi_61_last & 0x04)
                                ? (port62_mem_nibble & 0x0F)          /* low */
                                : ((port62_mem_nibble >> 4) & 0x0F);  /* high */
-                if (ppi_61_last & 0x02) valr |= 0x20;
+                }
+                if (ppi_61_last & 0x02) valr |= 0x20; /* speaker */
                 io->Rax = valr;
                 port_log_io(io, "sys_portc");
 
