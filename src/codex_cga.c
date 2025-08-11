@@ -1,15 +1,21 @@
 #include "codex_cga.h"
+#include "font8x8_basic.h"
 
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define CGA_COLS 80
+#define CGA_ROWS 25
+#define CGA_WIDTH  (CGA_COLS * 8)
+#define CGA_HEIGHT (CGA_ROWS * 8)
 
 struct CodexCga {
     uint8_t* mem;
     SDL_Window* window;
     SDL_Renderer* renderer;
     SDL_Texture* texture;
-    uint32_t pixels[320 * 200];
+    uint32_t pixels[CGA_WIDTH * CGA_HEIGHT];
 };
 
 static const uint32_t cga_palette[16] = {
@@ -30,13 +36,13 @@ CodexCga* codex_cga_create(uint8_t* memory) {
     }
     memset(c, 0, sizeof(*c));
     c->mem = memory;
-    c->window = SDL_CreateWindow("CGA", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 320, 200, 0);
+    c->window = SDL_CreateWindow("CGA", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, CGA_WIDTH, CGA_HEIGHT, 0);
     if (!c->window) {
         codex_cga_destroy(c);
         return NULL;
     }
     c->renderer = SDL_CreateRenderer(c->window, -1, SDL_RENDERER_ACCELERATED);
-    c->texture = SDL_CreateTexture(c->renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 320, 200);
+    c->texture = SDL_CreateTexture(c->renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, CGA_WIDTH, CGA_HEIGHT);
     return c;
 }
 
@@ -56,17 +62,23 @@ void codex_cga_update(CodexCga* c) {
         if (e.type == SDL_QUIT) exit(0);
     }
     uint8_t* vram = c->mem + 0xB8000;
-    for (int y = 0; y < 200; ++y) {
-        for (int x = 0; x < 320; x += 2) {
-            int offset = y * 160 + (x / 2);
-            uint8_t byte = vram[offset];
-            uint32_t left = cga_palette[byte >> 4];
-            uint32_t right = cga_palette[byte & 0x0F];
-            c->pixels[y * 320 + x] = left;
-            c->pixels[y * 320 + x + 1] = right;
+    for (int r = 0; r < CGA_ROWS; ++r) {
+        for (int ccol = 0; ccol < CGA_COLS; ++ccol) {
+            int offset = 2 * (r * CGA_COLS + ccol);
+            uint8_t ch = vram[offset];
+            uint8_t attr = vram[offset + 1];
+            uint32_t fg = cga_palette[attr & 0x0F];
+            uint32_t bg = cga_palette[(attr >> 4) & 0x07];
+            for (int y = 0; y < 8; ++y) {
+                uint8_t bits = (uint8_t)font8x8_basic[ch][y];
+                for (int x = 0; x < 8; ++x) {
+                    uint32_t color = (bits & (1 << x)) && !(attr & 0x80) ? fg : bg;
+                    c->pixels[(r * 8 + y) * CGA_WIDTH + ccol * 8 + x] = color;
+                }
+            }
         }
     }
-    SDL_UpdateTexture(c->texture, NULL, c->pixels, 320 * sizeof(uint32_t));
+    SDL_UpdateTexture(c->texture, NULL, c->pixels, CGA_WIDTH * sizeof(uint32_t));
     SDL_RenderClear(c->renderer);
     SDL_RenderCopy(c->renderer, c->texture, NULL, NULL);
     SDL_RenderPresent(c->renderer);
