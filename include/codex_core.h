@@ -7,6 +7,7 @@
 #include "codex_pic.h"
 #include "codex_nmi.h"
 #include "codex_dma.h"
+#include "codex_fdc.h"
 
 struct CodexCga;
 
@@ -33,6 +34,7 @@ typedef struct CodexCore {
     CodexPic pic;
     CodexNmi nmi;
     CodexDma dma;
+    CodexFdc fdc;
     struct CodexCga* cga;
 } CodexCore;
 

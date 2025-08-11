@@ -3,6 +3,7 @@
 #include "codex_core.h"
 #include "codex_cga.h"
 #include "port_log.h"
+#include "codex_fdc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,6 +254,15 @@ int codex_core_run(CodexCore* core)
                     io->Rax = (uint8_t)(cga_status_local | 0x01);
                 }
                 port_log_io(io, "cga_status");
+
+            /* --- FDC 0x3F0–0x3F7 -------------------------------------------- */
+            } else if (port >= 0x3F0 && port <= 0x3F7) {
+                if (isWrite) {
+                    codex_fdc_io_write(&core->fdc, port, (uint8_t)value);
+                } else {
+                    io->Rax = codex_fdc_io_read(&core->fdc, port);
+                }
+                port_log_io(io, isWrite ? "fdc_write" : "fdc_read");
 
             /* --- DMA kontroler (0x00–0x0F) ----------------------------------- */
             } else if (port <= 0x0F) {
