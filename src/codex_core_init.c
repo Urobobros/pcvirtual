@@ -1,6 +1,7 @@
 /* codex_core_init.c */
 
 #include "codex_core.h"
+#include "codex_cga.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -27,6 +28,10 @@ void codex_core_destroy(CodexCore* core) {
     if (core->partition) {
         WHvDeleteVirtualProcessor(core->partition, 0);
         WHvDeletePartition(core->partition);
+    }
+    if (core->cga) {
+        codex_cga_destroy(core->cga);
+        core->cga = NULL;
     }
     if (core->memory) {
         VirtualFree(core->memory, 0, MEM_RELEASE);
@@ -161,6 +166,7 @@ int codex_core_init(CodexCore* core, const char* bios_path) {
         return -1;
     }
     dma_init(&core->dma);
+    core->cga = codex_cga_create(core->memory);
 
     return 0;
 }

@@ -1,6 +1,7 @@
 /* codex_core.c */
 
 #include "codex_core.h"
+#include "codex_cga.h"
 #include "port_log.h"
 
 #include <stdio.h>
@@ -393,6 +394,7 @@ int codex_core_run(CodexCore* core)
         /* Periodické periferie a pokus o doručení IRQ po KAŽDÉM exitu */
         codex_pit_update(&core->pit, core);
         codex_pic_try_inject(&core->pic, core);
+        codex_cga_update(core->cga);
     }
 
 #else

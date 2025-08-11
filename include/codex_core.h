@@ -8,6 +8,8 @@
 #include "codex_nmi.h"
 #include "codex_dma.h"
 
+struct CodexCga;
+
 #ifdef _WIN32
 #include <Windows.h>
 #include <winhvplatform.h>
@@ -31,6 +33,7 @@ typedef struct CodexCore {
     CodexPic pic;
     CodexNmi nmi;
     CodexDma dma;
+    struct CodexCga* cga;
 } CodexCore;
 
 int codex_core_init(CodexCore* core, const char* bios_path);
