@@ -16,13 +16,13 @@
 
 /* ====== DEBUG TOGGLES ==================================================== */
 #ifndef PIT_DEBUG_CTRL
-#define PIT_DEBUG_CTRL   1   /* log dekódovaný control word (port 0x43) */
+#define PIT_DEBUG_CTRL   0   /* log dekódovaný control word (port 0x43) */
 #endif
 #ifndef PIT_DEBUG_LATCH
-#define PIT_DEBUG_LATCH  1   /* log páru LSB->MSB při latched read z 0x41 */
+#define PIT_DEBUG_LATCH  0   /* log páru LSB->MSB při latched read z 0x41 */
 #endif
 #ifndef PIT_DEBUG_NUDGE
-#define PIT_DEBUG_NUDGE  1   /* diagnostický „nudge“ po 43h,40h (CH1 latch) */
+#define PIT_DEBUG_NUDGE  0   /* diagnostický „nudge“ po 43h,40h (CH1 latch) */
 #endif
 /* ======================================================================== */
 
