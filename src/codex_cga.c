@@ -2,6 +2,7 @@
 #include "font8x8_basic.h"
 
 #include <SDL2/SDL.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -82,5 +83,22 @@ void codex_cga_update(CodexCga* c) {
     SDL_RenderClear(c->renderer);
     SDL_RenderCopy(c->renderer, c->texture, NULL, NULL);
     SDL_RenderPresent(c->renderer);
+}
+
+void codex_cga_dump_text(CodexCga* c, const char* path) {
+    if (!c || !path) return;
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    uint8_t* vram = c->mem + 0xB8000;
+    for (int r = 0; r < CGA_ROWS; ++r) {
+        for (int ccol = 0; ccol < CGA_COLS; ++ccol) {
+            int offset = 2 * (r * CGA_COLS + ccol);
+            uint8_t ch = vram[offset];
+            if (ch < 32 || ch > 126) ch = '.';
+            fputc(ch, f);
+        }
+        fputc('\n', f);
+    }
+    fclose(f);
 }
 
