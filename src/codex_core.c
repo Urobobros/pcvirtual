@@ -123,7 +123,6 @@ int codex_core_run(CodexCore* core)
 
 #ifdef _WIN32
     IfShadowDebug ifdbg = {0};
-    static uint8_t ppi_61_last = 0;
 
     while (1) {
         WHV_RUN_VP_EXIT_CONTEXT exit_ctx;
@@ -205,18 +204,18 @@ int codex_core_run(CodexCore* core)
             /* --- PPI 0x61 ----------------------------------------------------- */
             } else if (port == 0x61) {
                 if (isWrite) {
-                    uint8_t prev = ppi_61_last;
-                    ppi_61_last = (uint8_t)value;
+                    uint8_t prev = core->ppi_61_last;
+                    core->ppi_61_last = (uint8_t)value;
 
                     /* bit0 = GATE2. Na náběžné hraně restart CH2 fáze */
                     codex_pit_set_gate2(&core->pit,
-                        (ppi_61_last & 0x01) != 0,
-                        ((prev & 0x01) == 0) && ((ppi_61_last & 0x01) != 0));
+                        (core->ppi_61_last & 0x01) != 0,
+                        ((prev & 0x01) == 0) && ((core->ppi_61_last & 0x01) != 0));
 
                 } else {
                     /* bit5 = OUT2 z PIT CH2 */
                     uint8_t out2 = codex_pit_out2(&core->pit) ? 0x20 : 0x00;
-                    io->Rax = (ppi_61_last & (uint8_t)~0x20) | out2;
+                    io->Rax = (core->ppi_61_last & (uint8_t)~0x20) | out2;
                 }
                 port_log_io(io, isWrite ? "ppi61_write" : "ppi61_read");
 
@@ -226,16 +225,16 @@ int codex_core_run(CodexCore* core)
                 const uint8_t port62_mem_nibble =
                     (uint8_t)((GUEST_RAM_KB - 64) / 32);
                 uint8_t valr;
-                if (ppi_61_last & 0x08) {
+                if (core->ppi_61_last & 0x08) {
                     /* bit3=1 selects disk/video DIP group. 1 drive, color 80x25 */
                     valr = 0x04;
                 } else {
                     /* bit3=0 selects memory-size nibble */
-                    valr = (ppi_61_last & 0x04)
+                    valr = (core->ppi_61_last & 0x04)
                                ? (port62_mem_nibble & 0x0F)          /* low */
                                : ((port62_mem_nibble >> 4) & 0x0F);  /* high */
                 }
-                if (ppi_61_last & 0x02) valr |= 0x20; /* speaker */
+                if (core->ppi_61_last & 0x02) valr |= 0x20; /* speaker */
                 io->Rax = valr;
                 port_log_io(io, "sys_portc");
 

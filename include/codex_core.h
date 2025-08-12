@@ -36,6 +36,7 @@ typedef struct CodexCore {
     CodexDma dma;
     CodexFdc fdc;
     struct CodexCga* cga;
+    uint8_t ppi_61_last;
 } CodexCore;
 
 int codex_core_init(CodexCore* core, const char* bios_path);
