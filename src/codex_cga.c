@@ -1,6 +1,6 @@
 #include "codex_cga.h"
+#include "font8x8_basic.h"
 #include <SDL2/SDL.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -8,8 +8,10 @@
 #include <windows.h>
 #endif
 
-#define CGA_WIDTH  320
-#define CGA_HEIGHT 200
+#define CGA_COLS 80
+#define CGA_ROWS 25
+#define CGA_WIDTH  (CGA_COLS * 8)
+#define CGA_HEIGHT (CGA_ROWS * 8)
 
 struct CodexCga {
     uint8_t* mem;
@@ -19,13 +21,12 @@ struct CodexCga {
     uint32_t pixels[CGA_WIDTH * CGA_HEIGHT];
 };
 
-static const uint32_t cga_palette[4] = {
-    0xFF000000, /* black */
-    0xFF00AAAA, /* cyan */
-    0xFFAA00AA, /* magenta */
-    0xFFFFFFFF  /* white */
+static const uint32_t cga_palette[16] = {
+    0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA,
+    0xFFAA0000, 0xFFAA00AA, 0xFFAA5500, 0xFFAAAAAA,
+    0xFF555555, 0xFF5555FF, 0xFF55FF55, 0xFF55FFFF,
+    0xFFFF5555, 0xFFFF55FF, 0xFFFFFF55, 0xFFFFFFFF,
 };
-
 
 CodexCga* codex_cga_create(uint8_t* memory) {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -38,13 +39,15 @@ CodexCga* codex_cga_create(uint8_t* memory) {
     }
     memset(c, 0, sizeof(*c));
     c->mem = memory;
-    c->window = SDL_CreateWindow("CGA", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, CGA_WIDTH, CGA_HEIGHT, 0);
+    c->window = SDL_CreateWindow("CGA", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                 CGA_WIDTH, CGA_HEIGHT, 0);
     if (!c->window) {
         codex_cga_destroy(c);
         return NULL;
     }
     c->renderer = SDL_CreateRenderer(c->window, -1, SDL_RENDERER_ACCELERATED);
-    c->texture = SDL_CreateTexture(c->renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, CGA_WIDTH, CGA_HEIGHT);
+    c->texture = SDL_CreateTexture(c->renderer, SDL_PIXELFORMAT_ARGB8888,
+                                   SDL_TEXTUREACCESS_STREAMING, CGA_WIDTH, CGA_HEIGHT);
 #ifdef _WIN32
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
@@ -77,23 +80,31 @@ void codex_cga_update(CodexCga* c) {
 #ifdef _WIN32
         if (e.type == SDL_SYSWMEVENT) {
             const SDL_SysWMmsg* msg = e.syswm.msg;
-            if (msg->msg.win.msg == WM_COMMAND && LOWORD(msg->msg.win.wParam) == 1) {
+            if (msg->msg.win.msg == WM_COMMAND && LOWORD(msg->msg.win.wParam) == 1)
                 exit(0);
-            }
         }
 #endif
     }
+
     uint8_t* vram = c->mem + 0xB8000;
-    for (int y = 0; y < CGA_HEIGHT; ++y) {
-        uint8_t* line = vram + ((y & 1) ? 0x2000 : 0) + (y >> 1) * 80;
-        for (int x = 0; x < CGA_WIDTH; x += 4) {
-            uint8_t b = line[x >> 2];
-            c->pixels[y * CGA_WIDTH + x + 0] = cga_palette[(b >> 6) & 3];
-            c->pixels[y * CGA_WIDTH + x + 1] = cga_palette[(b >> 4) & 3];
-            c->pixels[y * CGA_WIDTH + x + 2] = cga_palette[(b >> 2) & 3];
-            c->pixels[y * CGA_WIDTH + x + 3] = cga_palette[(b >> 0) & 3];
+    for (int row = 0; row < CGA_ROWS; ++row) {
+        for (int col = 0; col < CGA_COLS; ++col) {
+            size_t pos = (row * CGA_COLS + col) * 2;
+            uint8_t ch = vram[pos];
+            uint8_t attr = vram[pos + 1];
+            const uint8_t* glyph = (ch < 128) ? font8x8_basic[ch] : font8x8_basic[0];
+            uint32_t fg = cga_palette[attr & 0x0F];
+            uint32_t bg = cga_palette[(attr >> 4) & 0x0F];
+            for (int gy = 0; gy < 8; ++gy) {
+                uint8_t bits = glyph[gy];
+                for (int gx = 0; gx < 8; ++gx) {
+                    uint32_t color = (bits & (0x80 >> gx)) ? fg : bg;
+                    c->pixels[(row * 8 + gy) * CGA_WIDTH + col * 8 + gx] = color;
+                }
+            }
         }
     }
+
     SDL_UpdateTexture(c->texture, NULL, c->pixels, CGA_WIDTH * sizeof(uint32_t));
     SDL_RenderClear(c->renderer);
     SDL_RenderCopy(c->renderer, c->texture, NULL, NULL);
