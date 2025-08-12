@@ -96,8 +96,7 @@ void codex_cga_update(CodexCga* c) {
             uint32_t fg = cga_palette[attr & 0x0F];
             uint32_t bg = cga_palette[(attr >> 4) & 0x0F];
             for (int gy = 0; gy < 8; ++gy) {
-                /* Font data stores the top row first; flip vertically so text isn't upside down */
-                uint8_t bits = glyph[7 - gy];
+                uint8_t bits = glyph[gy];
                 for (int gx = 0; gx < 8; ++gx) {
                     uint32_t color = (bits & (0x80 >> gx)) ? fg : bg;
                     c->pixels[(row * 8 + gy) * CGA_WIDTH + col * 8 + gx] = color;
