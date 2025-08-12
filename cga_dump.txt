@@ -1,0 +1,25 @@
+                                                                                
+GLaBIOS [.] Reboot the Past                                                     
+(C) 2022-25 640KB Released under GPLv3                                          
+                                                                                
+Boot   [ COLD ]                                                                 
+RAM    [ 640 KB OK ]            Video  [ CGA ]                                  
+CPU    [ 8088 ]                 FPU    [ 8087 ]                                 
+LPT    [ None ]                 COM    [ 03F8 02F8 03E8 02E8 ]                  
+FDD    [ 0 ]                                                                    
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+Ver: 0.4.0-8X 07/17/25                                                          
