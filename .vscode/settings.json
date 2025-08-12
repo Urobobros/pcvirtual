@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "winhvplatformdefs.h": "c",
+        "winhvplatform.h": "c",
+        "pic8259.h": "c",
+        "stdint.h": "c",
+        "stdlib.h": "c",
+        "stdio.h": "c",
+        "port_log.h": "c",
+        "string.h": "c"
+    }
+}
