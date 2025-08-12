@@ -98,7 +98,7 @@ void codex_cga_update(CodexCga* c) {
             for (int gy = 0; gy < 8; ++gy) {
                 uint8_t bits = glyph[gy];
                 for (int gx = 0; gx < 8; ++gx) {
-                    uint32_t color = (bits & (0x80 >> gx)) ? fg : bg;
+                    uint32_t color = (bits & (1u << gx)) ? fg : bg;
                     c->pixels[(row * 8 + gy) * CGA_WIDTH + col * 8 + gx] = color;
                 }
             }
