@@ -175,6 +175,9 @@ void codex_fdc_destroy(CodexFdc* fdc) {
 
 uint8_t codex_fdc_io_read(CodexFdc* fdc, uint16_t port) {
     switch (port) {
+    case 0x3F2:
+        /* Digital Output Register reflects last written value */
+        return fdc->dor;
     case 0x3F4:
         return fdc->msr;
     case 0x3F5:
