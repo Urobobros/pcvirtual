@@ -9,6 +9,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef FDC_DEBUG
+#define FDC_DEBUG 0
+#endif
+
+#if FDC_DEBUG
+#define FDCLOG(...) fprintf(stderr, "[FDC] " __VA_ARGS__)
+#else
+#define FDCLOG(...) (void)0
+#endif
+
 static uint8_t* dma_buffer(CodexFdc* fdc, size_t len) {
     CodexDma* dma = &fdc->core->dma;
     uint32_t addr = dma->addr[2];
@@ -20,11 +30,13 @@ static uint8_t* dma_buffer(CodexFdc* fdc, size_t len) {
 
 static void raise_irq(CodexFdc* fdc) {
     fdc->irq_pending = 1;
+    FDCLOG("raise IRQ\n");
     codex_pic_raise_irq(&fdc->core->pic, fdc->core, 6);
 }
 
 static void lower_irq(CodexFdc* fdc) {
     if (fdc->irq_pending) {
+        FDCLOG("lower IRQ\n");
         pic8259_lower_irq(&fdc->core->pic.pic, 6);
         fdc->irq_pending = 0;
     }
@@ -47,12 +59,15 @@ static void finish_command(CodexFdc* fdc) {
 }
 
 static void exec_command(CodexFdc* fdc) {
+    FDCLOG("cmd %02X\n", fdc->cmd);
     switch (fdc->cmd & 0x1F) {
     case 0x03: /* SPECIFY */
+        FDCLOG("  SPECIFY\n");
         finish_command(fdc);
         break;
     case 0x07: { /* RECALIBRATE */
         int drive = fdc->params[0] & 3;
+        FDCLOG("  RECALIBRATE drive %d\n", drive);
         fdc->track[drive] = 0;
         fdc->st0_irq = 0x20 | drive; /* seek end */
         fdc->pcn_irq = 0;
@@ -61,6 +76,7 @@ static void exec_command(CodexFdc* fdc) {
         break; }
     case 0x04: { /* SENSE DRIVE STATUS */
         int drive = fdc->params[0] & 3;
+        FDCLOG("  SENSE DRIVE STATUS drive %d\n", drive);
         uint8_t st3 = 0x20 | drive; /* drive ready */
         if (fdc->track[drive] == 0) st3 |= 0x10;
         uint8_t res[1] = { st3 };
@@ -69,6 +85,7 @@ static void exec_command(CodexFdc* fdc) {
     case 0x0F: { /* SEEK */
         int drive = fdc->params[0] & 3;
         uint8_t cyl = fdc->params[1];
+        FDCLOG("  SEEK drive %d to %u\n", drive, cyl);
         fdc->track[drive] = cyl;
         fdc->st0_irq = 0x20 | drive;
         fdc->pcn_irq = cyl;
@@ -76,6 +93,7 @@ static void exec_command(CodexFdc* fdc) {
         finish_command(fdc);
         break; }
     case 0x08: { /* SENSE INTERRUPT STATUS */
+        FDCLOG("  SENSE INTERRUPT STATUS st0=%02X pcn=%u\n", fdc->st0_irq, fdc->pcn_irq);
         uint8_t res[2] = { fdc->st0_irq, fdc->pcn_irq };
         set_result(fdc, res, 2);
         lower_irq(fdc);
@@ -89,6 +107,7 @@ static void exec_command(CodexFdc* fdc) {
         int sz = 128 << size_code;
         int spt = fdc->sectors_per_track;
         size_t offset = ((track * fdc->heads + head) * spt + (sector - 1)) * fdc->sector_size;
+        FDCLOG("  READ DATA d%d h%d t%u s%u sz%d\n", drive, head, track, sector, sz);
         uint8_t* dest = dma_buffer(fdc, sz);
         if (dest && offset + sz <= fdc->disk_size) {
             memcpy(dest, fdc->disk + offset, sz);
@@ -105,6 +124,7 @@ static void exec_command(CodexFdc* fdc) {
         raise_irq(fdc);
         break; }
     default:
+        FDCLOG("  UNKNOWN CMD %02X\n", fdc->cmd);
         finish_command(fdc);
         break;
     }
@@ -177,20 +197,26 @@ uint8_t codex_fdc_io_read(CodexFdc* fdc, uint16_t port) {
     switch (port) {
     case 0x3F2:
         /* Digital Output Register reflects last written value */
+        FDCLOG("read DOR -> %02X\n", fdc->dor);
         return fdc->dor;
     case 0x3F4:
+        FDCLOG("read MSR -> %02X\n", fdc->msr);
         return fdc->msr;
     case 0x3F5:
         if (fdc->state == FDC_STATE_RESULT && fdc->result_pos < fdc->result_len) {
             uint8_t v = fdc->result[fdc->result_pos++];
             if (fdc->result_pos >= fdc->result_len)
                 finish_command(fdc);
+            FDCLOG("read DATA -> %02X\n", v);
             return v;
         }
+        FDCLOG("read DATA -> 00 (idle)\n");
         return 0;
     case 0x3F7:
+        FDCLOG("read DIR\n");
         return 0; /* disk change not emulated */
     default:
+        FDCLOG("read %04X -> FF\n", port);
         return 0xFF;
     }
 }
@@ -199,14 +225,17 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
     switch (port) {
     case 0x3F2: {
         uint8_t old = fdc->dor;
+        FDCLOG("write DOR %02X\n", value);
         fdc->dor = value;
         if (!(value & 0x04)) { /* reset asserted */
+            FDCLOG("  reset asserted\n");
             fdc->st0_irq = 0xC0; /* invalid */
             fdc->pcn_irq = 0;
             lower_irq(fdc);
             finish_command(fdc);
         } else if (!(old & 0x04) && (value & 0x04)) {
             /* reset released – raise IRQ so BIOS sees the controller */
+            FDCLOG("  reset released\n");
             fdc->st0_irq = 0xC0;
             fdc->pcn_irq = 0;
             raise_irq(fdc);
@@ -214,6 +243,7 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
         }
         break; }
     case 0x3F5:
+        FDCLOG("write DATA %02X\n", value);
         if (fdc->state == FDC_STATE_COMMAND) {
             fdc->cmd = value;
             fdc->param_count = 0;
@@ -234,7 +264,11 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
         }
         break;
     case 0x3F7:
+        FDCLOG("write 3F7 %02X\n", value);
         /* ignore */
+        break;
+    default:
+        FDCLOG("write %04X %02X\n", port, value);
         break;
     }
 }
