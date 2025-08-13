@@ -5,19 +5,10 @@
 #include "codex_pic.h"
 #include "codex_dma.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef FDC_DEBUG
-#define FDC_DEBUG 0
-#endif
-
-#if FDC_DEBUG
-#define FDCLOG(...) fprintf(stderr, "[FDC] " __VA_ARGS__)
-#else
-#define FDCLOG(...) (void)0
-#endif
+#include "codex_fdc_debug.h"
 
 static uint8_t* dma_buffer(CodexFdc* fdc, size_t len) {
     CodexDma* dma = &fdc->core->dma;
