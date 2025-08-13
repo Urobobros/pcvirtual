@@ -23,6 +23,13 @@ static void raise_irq(CodexFdc* fdc) {
     codex_pic_raise_irq(&fdc->core->pic, fdc->core, 6);
 }
 
+static void lower_irq(CodexFdc* fdc) {
+    if (fdc->irq_pending) {
+        pic8259_lower_irq(&fdc->core->pic.pic, 6);
+        fdc->irq_pending = 0;
+    }
+}
+
 static void set_result(CodexFdc* fdc, const uint8_t* buf, int len) {
     memcpy(fdc->result, buf, len);
     fdc->result_len = len;
@@ -71,15 +78,7 @@ static void exec_command(CodexFdc* fdc) {
     case 0x08: { /* SENSE INTERRUPT STATUS */
         uint8_t res[2] = { fdc->st0_irq, fdc->pcn_irq };
         set_result(fdc, res, 2);
-        fdc->irq_pending = 0;
-        if (fdc->reset_sense_drive >= 0 && fdc->reset_sense_drive < 3) {
-            fdc->reset_sense_drive++;
-            fdc->st0_irq = 0xC0 | fdc->reset_sense_drive;
-            fdc->pcn_irq = 0;
-            raise_irq(fdc);
-        } else {
-            fdc->reset_sense_drive = -1;
-        }
+        lower_irq(fdc);
         break; }
     case 0x06: { /* READ DATA */
         int drive = fdc->params[0] & 3;
@@ -116,7 +115,6 @@ int codex_fdc_init(CodexFdc* fdc, CodexCore* core, const char* image_path) {
     memset(fdc, 0, sizeof(*fdc));
     fdc->core = core;
     fdc->msr = 0x80;
-    fdc->reset_sense_drive = -1;
     fdc->sector_size = 512;
     /* default geometry 1.44MB */
     fdc->heads = 2;
@@ -202,13 +200,12 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
         if (!(value & 0x04)) { /* reset asserted */
             fdc->st0_irq = 0xC0; /* invalid */
             fdc->pcn_irq = 0;
-            fdc->irq_pending = 0;
+            lower_irq(fdc);
             finish_command(fdc);
         } else if (!(old & 0x04) && (value & 0x04)) {
             /* reset released – raise IRQ so BIOS sees the controller */
             fdc->st0_irq = 0xC0;
             fdc->pcn_irq = 0;
-            fdc->reset_sense_drive = 0;
             raise_irq(fdc);
             finish_command(fdc);
         }
