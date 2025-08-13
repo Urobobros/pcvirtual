@@ -17,6 +17,7 @@ typedef struct {
     uint8_t st0, st1, st2;
     uint8_t st0_irq, pcn_irq;
     int irq_pending;
+    int reset_sense_drive;
     uint8_t params[9];
     int param_count;
     int param_expected;
@@ -24,7 +25,7 @@ typedef struct {
     int result_len;
     int result_pos;
     enum { FDC_STATE_COMMAND, FDC_STATE_PARAMS, FDC_STATE_RESULT } state;
-    uint8_t track[2];
+    uint8_t track[4];
     /* loaded floppy image */
     uint8_t* disk;
     size_t disk_size;
