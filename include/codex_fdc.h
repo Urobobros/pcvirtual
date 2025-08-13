@@ -17,6 +17,7 @@ typedef struct {
     uint8_t st0, st1, st2;
     uint8_t st0_irq, pcn_irq;
     int irq_pending;
+    int reset_sense_drive;
     uint8_t params[9];
     int param_count;
     int param_expected;

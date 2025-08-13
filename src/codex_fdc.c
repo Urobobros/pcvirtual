@@ -88,6 +88,16 @@ static void exec_command(CodexFdc* fdc) {
         uint8_t res[2] = { fdc->st0_irq, fdc->pcn_irq };
         set_result(fdc, res, 2);
         lower_irq(fdc);
+        if (fdc->reset_sense_drive >= 0) {
+            fdc->reset_sense_drive++;
+            if (fdc->reset_sense_drive < 4) {
+                fdc->st0_irq = 0xC0 | fdc->reset_sense_drive;
+                fdc->pcn_irq = fdc->track[fdc->reset_sense_drive];
+                raise_irq(fdc);
+            } else {
+                fdc->reset_sense_drive = -1;
+            }
+        }
         break; }
     case 0x06: { /* READ DATA */
         int drive = fdc->params[0] & 3;
@@ -175,6 +185,7 @@ int codex_fdc_init(CodexFdc* fdc, CodexCore* core, const char* image_path) {
             fclose(f);
         }
     }
+    fdc->reset_sense_drive = -1;
     return 0;
 }
 
@@ -222,13 +233,15 @@ void codex_fdc_io_write(CodexFdc* fdc, uint16_t port, uint8_t value) {
             FDCLOG("  reset asserted\n");
             fdc->st0_irq = 0xC0; /* invalid */
             fdc->pcn_irq = 0;
+            fdc->reset_sense_drive = -1;
             lower_irq(fdc);
             finish_command(fdc);
         } else if (!(old & 0x04) && (value & 0x04)) {
-            /* reset released – raise IRQ so BIOS sees the controller */
+            /* reset released – queue interrupts for each drive */
             FDCLOG("  reset released\n");
-            fdc->st0_irq = 0xC0;
-            fdc->pcn_irq = 0;
+            fdc->reset_sense_drive = 0;
+            fdc->st0_irq = 0xC0 | fdc->reset_sense_drive;
+            fdc->pcn_irq = fdc->track[fdc->reset_sense_drive];
             raise_irq(fdc);
             finish_command(fdc);
         }
