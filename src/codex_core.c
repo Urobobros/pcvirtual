@@ -1,7 +1,9 @@
 /* codex_core.c */
 
 #include "codex_core.h"
+#include "codex_cga.h"
 #include "port_log.h"
+#include "codex_fdc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,36 +204,36 @@ int codex_core_run(CodexCore* core)
             /* --- PPI 0x61 ----------------------------------------------------- */
             } else if (port == 0x61) {
                 if (isWrite) {
-                    static uint8_t ppi_61_last = 0;
-                    uint8_t prev = ppi_61_last;
-                    ppi_61_last = (uint8_t)value;
+                    uint8_t prev = core->ppi_61_last;
+                    core->ppi_61_last = (uint8_t)value;
 
                     /* bit0 = GATE2. Na náběžné hraně restart CH2 fáze */
                     codex_pit_set_gate2(&core->pit,
-                        (ppi_61_last & 0x01) != 0,
-                        ((prev & 0x01) == 0) && ((ppi_61_last & 0x01) != 0));
+                        (core->ppi_61_last & 0x01) != 0,
+                        ((prev & 0x01) == 0) && ((core->ppi_61_last & 0x01) != 0));
 
                 } else {
-                    static uint8_t ppi_61_last_ro = 0;
                     /* bit5 = OUT2 z PIT CH2 */
                     uint8_t out2 = codex_pit_out2(&core->pit) ? 0x20 : 0x00;
-                    io->Rax = (ppi_61_last_ro & (uint8_t)~0x20) | out2;
+                    io->Rax = (core->ppi_61_last & (uint8_t)~0x20) | out2;
                 }
                 port_log_io(io, isWrite ? "ppi61_write" : "ppi61_read");
 
             /* --- SYS_PORTC 0x62 ---------------------------------------------- */
             } else if (port == 0x62) {
-                /* RAM size nibbly řízené bitem 2 z 61h */
+                /* PPI port C: RAM size nibble or disk/video DIP group */
                 uint8_t valr;
-                {
+                if (core->ppi_61_last & 0x08) {
+                    /* bit3=1 selects disk/video DIP group. 1 drive, color 80x25 */
+                    valr = 0x04;
+                } else {
                     const uint8_t port62_mem_nibble =
                         (uint8_t)((GUEST_RAM_KB - 64) / 32);
-                    static uint8_t ppi_61_last_local = 0;
-                    valr = (ppi_61_last_local & 0x04)
-                           ? (port62_mem_nibble & 0x0F)          /* low */
-                           : ((port62_mem_nibble >> 4) & 0x0F);  /* high */
-                    if (ppi_61_last_local & 0x02) valr |= 0x20;
+                    valr = (core->ppi_61_last & 0x04)
+                               ? (port62_mem_nibble & 0x0F)          /* low */
+                               : ((port62_mem_nibble >> 4) & 0x0F);  /* high */
                 }
+                if (core->ppi_61_last & 0x02) valr |= 0x20; /* speaker */
                 io->Rax = valr;
                 port_log_io(io, "sys_portc");
 
@@ -257,6 +259,15 @@ int codex_core_run(CodexCore* core)
                     io->Rax = (uint8_t)(cga_status_local | 0x01);
                 }
                 port_log_io(io, "cga_status");
+
+            /* --- FDC 0x3F0–0x3F7 -------------------------------------------- */
+            } else if (port >= 0x3F0 && port <= 0x3F7) {
+                if (isWrite) {
+                    codex_fdc_io_write(&core->fdc, port, (uint8_t)value);
+                } else {
+                    io->Rax = codex_fdc_io_read(&core->fdc, port);
+                }
+                port_log_io(io, isWrite ? "fdc_write" : "fdc_read");
 
             /* --- DMA kontroler (0x00–0x0F) ----------------------------------- */
             } else if (port <= 0x0F) {
@@ -393,6 +404,8 @@ int codex_core_run(CodexCore* core)
         /* Periodické periferie a pokus o doručení IRQ po KAŽDÉM exitu */
         codex_pit_update(&core->pit, core);
         codex_pic_try_inject(&core->pic, core);
+        codex_cga_update(core->cga);
+        codex_cga_dump_text(core->cga, "cga_dump.txt");
     }
 
 #else

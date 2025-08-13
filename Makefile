@@ -12,13 +12,16 @@ ifeq ($(OS),Windows_NT)
   LIBS += -lWinHvPlatform
 endif
 
+SDL_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
+SDL_LIBS   := $(shell sdl2-config --libs 2>/dev/null)
+
 # Přepínač pro end-to-end test s DI času (0=fallback, 1=DI)
 PIT_TIME_SOURCE ?= 1
 
 all: codex
 
 codex: $(SRC) include/codex_core.h
-	$(CC) $(CFLAGS) $(SRC) -Iinclude -o $@ $(LDFLAGS) $(LIBS)
+	$(CC) $(CFLAGS) $(SDL_CFLAGS) $(SRC) -Iinclude -o $@ $(LDFLAGS) $(LIBS) $(SDL_LIBS)
 
 clean:
 	rm -f codex pit_test pit_test_integration pit_test_unit
